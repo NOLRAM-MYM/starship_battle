@@ -1,0 +1,12 @@
+node_modules/
+dist/
+target/
+*.log
+.env
+.env.local
+.DS_Store
+.vite/
+coverage/
+playwright-report/
+test-results/
+pnpm-lock.yaml
