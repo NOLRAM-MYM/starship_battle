@@ -1,5 +1,8 @@
 //! Definições de componentes de nave e ship loadout.
 
+pub mod builder;
+pub mod template;
+
 use serde::{Deserialize, Serialize};
 
 /// Categorias de slot em uma nave.
@@ -33,11 +36,15 @@ pub struct SlotPos {
 pub struct ComponentInstance {
     /// ID do template (ex.: "engine_mk3", "railgun_heavy").
     pub template_id: String,
+    /// Slot da nave onde este componente é instalado.
+    pub slot_id: u16,
     /// Tier (1..=5).
     pub tier: u8,
     /// Carga de upgrade aplicada (0..=100).
     pub upgrade_points: u16,
 }
+
+pub use builder::{build_ship, BuildError, ShipLoadout, ShipStats};
 
 #[cfg(test)]
 mod tests {

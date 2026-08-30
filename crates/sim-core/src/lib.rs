@@ -2,7 +2,7 @@
 //! Tudo que afeta regras/balance vive aqui para garantir paridade.
 
 #![deny(unsafe_code)]
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod ship;
 
