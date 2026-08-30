@@ -6,6 +6,7 @@ import { ShipStats } from './ecs/components/ship';
 import { GameRenderer } from './render/Renderer';
 import { createStarfield } from './render/Starfield';
 import { spinSystem } from './ecs/systems/spin';
+import { mountShipBuilder } from './ui/shipBuilder';
 
 async function bootstrap(): Promise<void> {
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement | null;
@@ -38,6 +39,19 @@ async function bootstrap(): Promise<void> {
   ShipStats.hullMax[eid] = 800;
   ShipStats.hullHp[eid] = 800;
   ShipStats.thrust[eid] = 50;
+
+  // UI do ship builder
+  const builder = mountShipBuilder();
+  builder.setOnChange((loadout) => {
+    // Quando o usuário monta uma nave, atualizamos a entity ECS.
+    // Reaproveitamos slotId como índice de slot (1..8) — Fase 2 conecta ao Rust.
+    let totalMass = 1000;
+    for (const l of loadout) {
+      totalMass += l.tier * 50;
+    }
+    ShipStats.mass[eid] = totalMass;
+  });
+  (globalThis as unknown as { __builder: typeof builder }).__builder = builder;
 
   let last = performance.now();
   const tick = (): void => {
