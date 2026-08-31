@@ -4,3 +4,4 @@
 #![deny(unsafe_code)]
 
 pub mod net;
+pub mod world;
