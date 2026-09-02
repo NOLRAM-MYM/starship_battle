@@ -22,6 +22,7 @@ async fn spawn_server() -> u16 {
                     player_id: 1,
                     protocol: PROTOCOL_VERSION,
                     tick_rate: SNAPSHOT_RATE_HZ,
+                    world_seed: 0xC0FFEE,
                 };
                 let bytes = bincode::serialize(&welcome).unwrap();
                 w.send(Message::Binary(bytes)).await.unwrap();
@@ -36,11 +37,16 @@ async fn spawn_server() -> u16 {
 async fn client_connects_and_receives_welcome() {
     let port = spawn_server().await;
     let url = format!("ws://127.0.0.1:{port}");
-    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let (ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
     let (mut write, mut read) = ws.split();
 
     // Envia Join.
-    let join = ClientMsg::Join { name: "alice".into(), protocol: 1 };
+    let join = ClientMsg::Join {
+            name: "alice".into(),
+            protocol: 1 ,
+            loadout: vec!["railgun_s".into()],
+            skills: vec![],
+        };
     let bytes = bincode::serialize(&join).unwrap();
     write.send(Message::Binary(bytes)).await.unwrap();
 
@@ -59,4 +65,45 @@ async fn client_connects_and_receives_welcome() {
         }
         other => panic!("expected Welcome, got {other:?}"),
     }
+}
+
+/// O listener precisa atender IPv4 E IPv6.
+///
+/// `bind("[::]:porta")` sozinho não garante isso: `IPV6_V6ONLY` vem
+/// desligado no Linux e LIGADO no Windows. O servidor subia em `[::]`,
+/// parecia no ar, e todo cliente em `127.0.0.1` levava conexão recusada
+/// — inclusive o próprio jogo, porque a URL padrão usa o IP literal.
+#[tokio::test]
+async fn aceita_conexao_em_ipv4_e_ipv6() {
+    use game_server::net::ws::serve;
+    use game_server::state::ServerState;
+
+    // Porta efêmera: descobre uma livre e solta antes de servir.
+    let porta = {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        l.local_addr().unwrap().port()
+    };
+
+    let state = ServerState::new();
+    let bind = format!("[::]:{porta}");
+    tokio::spawn(async move {
+        let _ = serve(&bind, state).await;
+    });
+
+    // Aguarda o listener subir usando IPv6, que funciona em qualquer
+    // caso — sondar por IPv4 aqui faria o teste gastar ~2s por tentativa
+    // recusada no Windows justamente quando ele está falhando, e o
+    // diagnóstico demoraria minutos em vez de segundos.
+    for _ in 0..100 {
+        if tokio::net::TcpStream::connect(("::1", porta)).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    let v4 = tokio::net::TcpStream::connect(("127.0.0.1", porta)).await;
+    assert!(v4.is_ok(), "IPv4 deveria conectar: {:?}", v4.err());
+
+    let v6 = tokio::net::TcpStream::connect(("::1", porta)).await;
+    assert!(v6.is_ok(), "IPv6 deveria conectar: {:?}", v6.err());
 }

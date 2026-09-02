@@ -4,13 +4,14 @@
 #![deny(unsafe_code)]
 
 mod net;
+mod npc;
+mod state;
+mod world;
 
-use std::sync::Arc;
-
-use tokio::sync::{mpsc, Mutex};
 use tracing_subscriber::EnvFilter;
 
-use crate::net::ws::{serve, Outbound};
+use crate::state::{run_simulation_loop, ServerState};
+use crate::net::ws::serve;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -20,13 +21,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )
         .init();
 
-    let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:7777".to_string());
+    // `[::]` e não `0.0.0.0`: o socket sai em dual-stack e atende tanto
+    // 127.0.0.1 quanto ::1. Só em IPv4, um cliente que resolve
+    // `localhost` para ::1 — o padrão no Windows — fica esperando a
+    // conexão sem receber nem uma recusa.
+    let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "[::]:7777".to_string());
+    let server_state = ServerState::new();
 
-    let (tx, _rx) = mpsc::unbounded_channel::<(u32, net::protocol::ServerMsg)>();
-    let outbound = Outbound { tx };
-    let next_player_id = Arc::new(Mutex::new(0u32));
+    // Spawna o loop de simulação autoritativo.
+    let sim_state = server_state.clone();
+    tokio::spawn(async move {
+        run_simulation_loop(sim_state).await;
+    });
 
     tracing::info!(%bind_addr, "game-server starting");
-    serve(&bind_addr, outbound, next_player_id).await?;
+    serve(&bind_addr, server_state).await?;
     Ok(())
 }

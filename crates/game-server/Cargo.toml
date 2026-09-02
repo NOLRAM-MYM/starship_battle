@@ -8,6 +8,8 @@ name = "game-server"
 path = "src/main.rs"
 
 [dependencies]
+# Só para abrir o listener em dual-stack: ver `bind_dual_stack` em net/ws.rs.
+socket2 = { version = "0.6", features = ["all"] }
 bevy_ecs = "0.15"
 tokio = { version = "1.42", features = ["macros", "rt-multi-thread", "time", "sync", "net"] }
 tokio-tungstenite = "0.24"
@@ -18,6 +20,7 @@ thiserror = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures-util = "0.3"
+sim-core = { path = "../sim-core" }
 
 [dev-dependencies]
 tokio = { version = "1.42", features = ["macros", "rt-multi-thread", "time", "net"] }
