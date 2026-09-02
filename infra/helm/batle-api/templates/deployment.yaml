@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "batle-api.fullname" . }}
+  labels:
+    {{- include "batle-api.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "batle-api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "batle-api.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "batle-api.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: {{ .Values.env.NODE_ENV | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.env.LOG_LEVEL | quote }}
+            - name: PORT
+              value: {{ .Values.env.PORT | quote }}
+            - name: HOST
+              value: {{ .Values.env.HOST | quote }}
+            - name: BCRYPT_COST
+              value: {{ .Values.env.BCRYPT_COST | quote }}
+            - name: JWT_EXPIRES_SEC
+              value: {{ .Values.env.JWT_EXPIRES_SEC | quote }}
+            - name: GAME_SERVER_URL
+              value: {{ .Values.env.GAME_SERVER_URL | quote }}
+            {{- if .Values.secrets.existingSecret }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: jwtSecret
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: databaseUrl
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: redisUrl
+            - name: NATS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: natsUrl
+            {{- else }}
+            - name: JWT_SECRET
+              value: {{ .Values.secrets.data.jwtSecret | quote }}
+            - name: DATABASE_URL
+              value: {{ .Values.secrets.data.databaseUrl | quote }}
+            - name: REDIS_URL
+              value: {{ .Values.secrets.data.redisUrl | quote }}
+            - name: NATS_URL
+              value: {{ .Values.secrets.data.natsUrl | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.livenessProbe.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.readinessProbe.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

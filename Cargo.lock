@@ -455,8 +455,6 @@ dependencies = [
  "futures-util",
  "serde",
  "serde_json",
- "sim-core",
- "socket2",
  "thiserror",
  "tokio",
  "tokio-tungstenite",

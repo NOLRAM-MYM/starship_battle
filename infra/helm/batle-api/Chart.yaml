@@ -1,0 +1,13 @@
+apiVersion: v2
+name: batle-api
+description: HTTP API for Space Battle Arena (auth, matchmaking, chat, clans)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/batle/space-battle-arena
+maintainers:
+  - name: batle
+keywords:
+  - game
+  - fastify
+  - api

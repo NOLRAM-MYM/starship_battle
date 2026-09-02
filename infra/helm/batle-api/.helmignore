@@ -1,0 +1,18 @@
+# Build artifacts
+node_modules/
+dist/
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+*.bak
+*.tmp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

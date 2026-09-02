@@ -1,0 +1,103 @@
+# Default values for batle-api.
+# Sobrescreva via -f values-prod.yaml ou --set key=value.
+
+replicaCount: 2
+
+image:
+  repository: batle/api
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Anotações extras aplicadas em TODOS os pods.
+podAnnotations: {}
+
+# Security context para o pod.
+podSecurityContext:
+  fsGroup: 1000
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# Security context para o container.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: api.batle.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Recursos pedidos/limites.
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Probes HTTP.
+livenessProbe:
+  path: /healthz
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+readinessProbe:
+  path: /readyz
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Variáveis de ambiente (não-sensíveis).
+env:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  PORT: "8080"
+  HOST: "0.0.0.0"
+  BCRYPT_COST: "12"
+  JWT_EXPIRES_SEC: "604800"
+  GAME_SERVER_URL: "ws://batle-game-server:7777"
+
+# Secrets sensíveis (em prod, use External Secrets Operator ou Vault).
+# Esses são placeholders; substitua via `helm install --set secrets.*` ou
+# montando um Secret externo referenciado em `existingSecret`.
+secrets:
+  # Cria um Secret gerenciado pelo Helm (apenas dev/local).
+  create: false
+  # external secret com chaves: jwtSecret, databaseUrl, redisUrl, natsUrl
+  existingSecret: ""
+  data:
+    jwtSecret: ""
+    databaseUrl: ""
+    redisUrl: ""
+    natsUrl: ""
