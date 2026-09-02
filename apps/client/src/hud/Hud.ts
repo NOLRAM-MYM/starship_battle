@@ -17,6 +17,14 @@ import type { Contact, Vec3 } from '../game/targeting.js';
 import type { NavPoint } from '../game/navigation.js';
 import './hud.css';
 
+/** Um consumível equipado, como o HUD o mostra. */
+export interface ConsumableState {
+  /** Nome curto para o slot. */
+  name: string;
+  /** Cargas restantes — o servidor é a fonte da verdade. */
+  charges: number;
+}
+
 export interface SkillState {
   id: ActiveSkill;
   cooldownEnd: number;
@@ -33,6 +41,13 @@ export interface HudState {
   money: number;
   targetName: string | null;
   skills: SkillState[];
+  /**
+   * Consumíveis equipados, com as cargas restantes.
+   *
+   * A loja vendia `repair_kit` e `shield_cell` desde sempre e não havia
+   * NADA no jogo indicando que estavam equipados, nem tecla para usar.
+   */
+  consumables: ConsumableState[];
   /** Callsign exibido no painel de vitais. */
   callsign: string;
   /** Contatos para o radar — atualizados pelo loop a partir do snapshot. */
@@ -87,6 +102,7 @@ export function createHudState(): HudState {
     xpNext: 100,
     money: 0,
     targetName: null,
+    consumables: [],
     skills: [
       { id: 'Dash', cooldownEnd: 0, cooldownTotal: 5000 },
       { id: 'Emp', cooldownEnd: 0, cooldownTotal: 10000 },
@@ -269,6 +285,29 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
     skillRefs.push({ box, cd, timer, wasReady: true });
   });
 
+  // ---------- Consumíveis (teclas 4 e 5) ----------
+  //
+  // Na mesma fileira das habilidades de propósito: são decididos no
+  // mesmo instante, e separá-los faria o jogador procurar em dois
+  // lugares no meio de um combate. O que os distingue é o CONTADOR —
+  // habilidade tem cooldown, consumível acaba.
+  interface ConsumableRefs {
+    box: HTMLElement;
+    count: HTMLElement;
+  }
+  const consumableRefs: ConsumableRefs[] = [];
+  const CONSUMABLE_KEYS = ['4', '5'];
+
+  state.consumables.forEach((c, idx) => {
+    const box = el('div', 'hud-skill hud-consumable');
+    const key = el('div', 'hud-skill-key', CONSUMABLE_KEYS[idx] ?? '');
+    const name = el('div', 'hud-skill-name', c.name);
+    const count = el('div', 'hud-consumable-count', String(c.charges));
+    box.append(key, name, count);
+    actions.appendChild(box);
+    consumableRefs.push({ box, count });
+  });
+
   // ---------- Navegação (fita de bússola + marcadores de borda) ----------
   const compass: CompassHandle = createCompass();
 
@@ -365,6 +404,16 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
     // A bússola trabalha em GRAUS; `state.heading` está em radianos.
     const headingDeg = ((state.heading * 180) / Math.PI + 360) % 360;
     compass.update(state.position, headingDeg, state.navPoints, state.navTargetId);
+
+    // ---- Consumíveis ----
+    state.consumables.forEach((c, idx) => {
+      const ref = consumableRefs[idx];
+      if (!ref) return;
+      ref.count.textContent = String(c.charges);
+      // Sem carga: apagado, mas ainda visível. Some-lo faria os slots
+      // dançarem no meio do combate.
+      ref.box.classList.toggle('empty', c.charges <= 0);
+    });
 
     // ---- Carga do tiro ----
     const carga = Math.max(0, Math.min(1, state.fireCharge));

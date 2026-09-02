@@ -8,7 +8,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::net::protocol::{VFX_EXPLOSION_LARGE, VFX_EXPLOSION_SHIP, VFX_IMPACT, VFX_MUZZLE};
+use crate::net::protocol::{
+    VFX_EMP, VFX_EXPLOSION_LARGE, VFX_EXPLOSION_SHIP, VFX_IMPACT, VFX_MUZZLE,
+};
 
 use crate::net::protocol::{EntityKind, EntityPayload, ProjectilePayload};
 use sim_core::skills::{ActiveSkill, SkillManager};
@@ -50,6 +52,14 @@ pub struct Ship {
     pub hull_max: f32,
     pub shield_hp: f32,
     pub shield_max: f32,
+    /// Consumíveis levados para a arena, com as cargas restantes.
+    pub belt: sim_core::ship::consumables::ConsumableBelt,
+    /// Segundos restantes de paralisia por PEM.
+    ///
+    /// Enquanto > 0 a nave não atira nem acelera. É o efeito que faltava
+    /// para a tecla 2 fazer alguma coisa — o PEM existia no enum e no
+    /// HUD, mas nenhuma nave era afetada por ele.
+    pub emp_remaining: f32,
     /// Fração do dano DESTA nave que ignora o escudo alvo (0..1).
     ///
     /// Vem da skill "Armor Piercing". Fica na nave atacante, não no
@@ -83,6 +93,8 @@ pub struct Ship {
     pub skills: SkillManager,
     /// Se o jogador solicitou ativação de uma skill neste frame.
     pub skill_input: Option<ActiveSkill>,
+    /// Slot de consumível que o jogador pediu para usar neste tick.
+    pub consumable_input: Option<u8>,
 }
 
 impl Default for Ship {
@@ -96,6 +108,8 @@ impl Default for Ship {
             roll_input: 0.0,
             hull_hp: 100.0,
             hull_max: 100.0,
+            belt: Default::default(),
+            emp_remaining: 0.0,
             shield_pierce: 0.0,
             shield_hp: 50.0,
             shield_max: 50.0,
@@ -115,6 +129,7 @@ impl Default for Ship {
             shield_regen: 0.0,
             skills: SkillManager::new(),
             skill_input: None,
+            consumable_input: None,
         }
     }
 }
@@ -277,6 +292,21 @@ impl World {
         self.apply_loadout_and_skills(player_id, template_ids, &[]);
     }
 
+    /// Equipa o cinto de consumíveis da nave do jogador.
+    ///
+    /// Separado do loadout porque as cargas vêm do INVENTÁRIO da conta,
+    /// não dos slots do chassi: o jogador pode entrar com três kits e
+    /// sair com zero, e isso não muda a nave que ele montou.
+    pub fn apply_consumables(
+        &mut self,
+        player_id: u32,
+        slots: &[sim_core::ship::consumables::ConsumableSlot],
+    ) {
+        let Some(&id) = self.player_ships.get(&player_id) else { return };
+        let Some((_, _, _, ship)) = self.ships.get_mut(&id) else { return };
+        ship.belt = sim_core::ship::consumables::ConsumableBelt::from_loadout(slots);
+    }
+
     /// Aplica equipamento e skills de uma vez.
     ///
     /// As duas coisas compõem o mesmo tiro — o equipamento define a arma
@@ -321,8 +351,12 @@ impl World {
         let id = self.alloc_id();
 
         let mut skills = SkillManager::new();
-        // Em um jogo real, leríamos o loadout. Por ora, destrava Dash para todos.
+        // As três, não só o Dash. Antes o HUD mostrava os botões de PEM
+        // e Reparo e as teclas 2 e 3 não faziam absolutamente nada,
+        // porque as habilidades nunca eram destravadas.
         skills.unlock(ActiveSkill::Dash);
+        skills.unlock(ActiveSkill::Emp);
+        skills.unlock(ActiveSkill::Repair);
 
         let ship = Ship {
             owner_player_id: player_id,
@@ -333,6 +367,8 @@ impl World {
             roll_input: 0.0,
             hull_hp: 100.0,
             hull_max: 100.0,
+            belt: Default::default(),
+            emp_remaining: 0.0,
             shield_pierce: 0.0,
             shield_hp: 50.0,
             shield_max: 50.0,
@@ -352,6 +388,7 @@ impl World {
             shield_regen: 0.0,
             skills,
             skill_input: None,
+            consumable_input: None,
         };
 
         // Ponto de surgimento espalhado num anel.
@@ -479,7 +516,9 @@ impl World {
         for id in ship_ids {
             let (pos, vel, rot, mut ship) = self.ships[&id].clone();
             ship.fire_cooldown = (ship.fire_cooldown - self.last_dt).max(0.0);
-            if ship.pending_fire && ship.fire_cooldown <= 0.0 {
+            // Nave paralisada por PEM não atira. É metade do efeito da
+            // habilidade; a outra metade é o empuxo cortado abaixo.
+            if ship.pending_fire && ship.fire_cooldown <= 0.0 && ship.emp_remaining <= 0.0 {
                 ship.pending_fire = false;
                 let carga = ship.pending_charge;
                 ship.pending_charge = 0.0;
@@ -752,6 +791,7 @@ impl World {
         fire: bool,
         fire_charge: f32,
         skill: Option<ActiveSkill>,
+        use_consumable: Option<u8>,
     ) {
         // Lookup direto pelo índice, em vez de varrer todas as naves.
         let Some(&id) = self.player_ships.get(&player_id) else {
@@ -772,6 +812,9 @@ impl World {
             // chegarem no mesmo tick, vale a carga mais completa.
             ship.pending_charge = ship.pending_charge.max(fire_charge.clamp(0.0, 10.0));
         }
+        if use_consumable.is_some() {
+            ship.consumable_input = use_consumable;
+        }
         if skill.is_some() {
             ship.skill_input = skill;
         }
@@ -784,11 +827,41 @@ impl World {
         self.last_dt = dt;
 
         // Processa skills e atualiza timers.
+        //
+        // Os pulsos de PEM são coletados aqui e aplicados depois: dentro
+        // do laço `self.ships` está emprestado, e o efeito precisa
+        // alcançar OUTRAS naves.
+        let mut pulsos_emp: Vec<(EntityId, u32, Position)> = Vec::new();
         let ship_ids: Vec<EntityId> = self.ships.keys().copied().collect();
         for id in ship_ids.iter() {
-            let (_, _, _, mut ship) = self.ships[id].clone();
+            let (pos_atual, _, _, mut ship) = self.ships[id].clone();
             ship.skills.tick(dt);
-            
+            ship.belt.tick(dt);
+            if ship.emp_remaining > 0.0 {
+                ship.emp_remaining = (ship.emp_remaining - dt).max(0.0);
+            }
+
+            // --- Consumível pedido pelo jogador ---
+            if let Some(slot) = ship.consumable_input.take() {
+                use sim_core::ship::consumables::{ConsumableEffect, UseOutcome};
+                if let UseOutcome::Used { effect, vfx } = ship.belt.use_slot(slot as usize) {
+                    match effect {
+                        ConsumableEffect::RepairHull { amount } => {
+                            ship.hull_hp = (ship.hull_hp + amount).min(ship.hull_max);
+                        }
+                        ConsumableEffect::RestoreShield { amount } => {
+                            ship.shield_hp = (ship.shield_hp + amount).min(ship.shield_max);
+                        }
+                    }
+                    self.events.push(crate::net::protocol::ServerMsg::ConsumableUsed {
+                        entity_id: *id,
+                        slot,
+                        vfx,
+                        charges_left: ship.belt.charges_at(slot as usize),
+                    });
+                }
+            }
+
             // Ativa a skill solicitada, se houver
             if let Some(requested_skill) = ship.skill_input.take() {
                 if ship.skills.use_skill(requested_skill) {
@@ -798,6 +871,12 @@ impl World {
                         ship.warp_remaining = ship.warp.duration;
                         ship.vortex_timer = 0.0;
                     }
+                    // O PEM paralisa quem estiver no raio. Guardamos os
+                    // alvos para aplicar fora deste laço — `self.ships`
+                    // está emprestado aqui.
+                    if requested_skill == ActiveSkill::Emp {
+                        pulsos_emp.push((*id, ship.owner_player_id, pos_atual));
+                    }
                     self.events.push(crate::net::protocol::ServerMsg::SkillActivated {
                         entity_id: *id,
                         skill: requested_skill,
@@ -805,8 +884,46 @@ impl World {
                 }
             }
             
+            // --- Reparo: cura contínua enquanto o efeito dura ---
+            //
+            // DEPOIS da ativação de propósito: checar antes gastava um
+            // tick à toa, e o jogador que aperta 3 com o casco crítico
+            // via o número parado por 33ms. Cura ao longo do tempo, ao
+            // contrário do consumível, que é instantâneo e escasso.
+            if ship.skills.effect_remaining(ActiveSkill::Repair) > 0.0 {
+                let cura = ActiveSkill::Repair.heal_per_sec() * dt;
+                ship.hull_hp = (ship.hull_hp + cura).min(ship.hull_max);
+            }
+
             // Re-insere na collection para salvar o estado
             self.ships.get_mut(id).unwrap().3 = ship;
+        }
+
+        // --- PEM: paralisa naves inimigas no raio ---
+        //
+        // Só inimigos: um pulso que derrubasse o próprio esquadrão
+        // tornaria a habilidade inutilizável em grupo, que é justamente
+        // onde ela deveria brilhar.
+        for (origem, dono, centro) in pulsos_emp {
+            let raio2 = ActiveSkill::Emp.radius().powi(2);
+            let duracao = ActiveSkill::Emp.duration_secs();
+            let alvos: Vec<EntityId> = self
+                .ships
+                .iter()
+                .filter(|(alvo_id, (p, _, _, s))| {
+                    **alvo_id != origem && s.owner_player_id != dono && dist_sq(*p, centro) <= raio2
+                })
+                .map(|(alvo_id, _)| *alvo_id)
+                .collect();
+            for alvo in alvos {
+                if let Some((_, _, _, s)) = self.ships.get_mut(&alvo) {
+                    s.emp_remaining = s.emp_remaining.max(duracao);
+                }
+            }
+            self.events.push(crate::net::protocol::ServerMsg::Vfx {
+                effect_id: VFX_EMP,
+                pos: [centro.x, centro.y, centro.z],
+            });
         }
 
         // Física de naves.
@@ -815,8 +932,14 @@ impl World {
             let (pos, vel, rot, ship) = self.ships[&id].clone();
             
             // Em dobra o empuxo é multiplicado; fora dela, normal.
+            // Sob PEM, zero: a nave fica à deriva com a inércia que
+            // tinha, que é o que torna o pulso perigoso perto de um
+            // poço gravitacional.
             let em_dobra = ship.warp_remaining > 0.0;
-            let thrust_capacity = if em_dobra {
+            let sob_emp = ship.emp_remaining > 0.0;
+            let thrust_capacity = if sob_emp {
+                0.0
+            } else if em_dobra {
                 ship.thrust_capacity * ship.warp.thrust_multiplier
             } else {
                 ship.thrust_capacity
@@ -1905,7 +2028,7 @@ mod tests {
             z: corpo.pos[2],
         };
         // Sem empuxo: só a gravidade age.
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None);
         for _ in 0..30 {
             w.step(1.0 / 30.0);
         }
@@ -1938,7 +2061,7 @@ mod tests {
         // --- pitch ---
         let mut w = World::new();
         w.spawn_player_ship(1, "p".into());
-        w.set_input(1, 0.0, 1.0, 0.0, 0.0, false, 0.0, None);
+        w.set_input(1, 0.0, 1.0, 0.0, 0.0, false, 0.0, None, None);
         for _ in 0..10 { w.step(1.0 / 30.0); }
         let f = frente(&w);
         assert!(f[1] > 0.05, "W deveria levantar o nariz, frente={f:?}");
@@ -1946,7 +2069,7 @@ mod tests {
         // --- yaw ---
         let mut w = World::new();
         w.spawn_player_ship(1, "p".into());
-        w.set_input(1, 1.0, 0.0, 0.0, 0.0, false, 0.0, None);
+        w.set_input(1, 1.0, 0.0, 0.0, 0.0, false, 0.0, None, None);
         for _ in 0..10 { w.step(1.0 / 30.0); }
         let f = frente(&w);
         assert!(f[0] < -0.05, "D deveria virar para a direita da tela (-X), frente={f:?}");
@@ -1956,7 +2079,7 @@ mod tests {
     fn dobrar(w: &mut World, pid: u32) {
         let id = w.player_ships[&pid];
         w.ships.get_mut(&id).unwrap().3.skills.unlock(ActiveSkill::Dash);
-        w.set_input(pid, 0.0, 0.0, 0.0, 1.0, false, 0.0, Some(ActiveSkill::Dash));
+        w.set_input(pid, 0.0, 0.0, 0.0, 1.0, false, 0.0, Some(ActiveSkill::Dash), None);
     }
 
     #[test]
@@ -1971,7 +2094,7 @@ mod tests {
             if dobrando {
                 dobrar(&mut w, 1);
             } else {
-                w.set_input(1, 0.0, 0.0, 0.0, 1.0, false, 0.0, None);
+                w.set_input(1, 0.0, 0.0, 0.0, 1.0, false, 0.0, None, None);
             }
             for _ in 0..30 { w.step(1.0 / 30.0); }
             let fim = w.player_position(1).unwrap();
@@ -2014,7 +2137,7 @@ mod tests {
             vel.y = 0.0;
             vel.z = 0.0;
         }
-        w.set_input(2, 0.0, 0.0, 0.0, 0.0, false, 0.0, None);
+        w.set_input(2, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None);
         for _ in 0..5 { w.step(1.0 / 30.0); }
 
         let (_, vel, _, _) = &w.ships[&perseguidor];
@@ -2074,7 +2197,7 @@ mod tests {
             w.ships.get_mut(&alvo).unwrap().3.hull_max = 100000.0;
             w.ships.get_mut(&alvo).unwrap().3.hull_hp = 100000.0;
             let antes = w.ships[&alvo].3.hull_hp;
-            w.set_input(1, 0.0, 0.0, 0.0, 0.0, true, carga, None);
+            w.set_input(1, 0.0, 0.0, 0.0, 0.0, true, carga, None, None);
             for _ in 0..8 { w.step(1.0 / 30.0); }
             antes - w.ships.get(&alvo).map(|s| s.3.hull_hp).unwrap_or(0.0)
         };
@@ -2537,5 +2660,245 @@ mod skills_no_combate {
             falso.ships[&id_f].3.weapon.damage,
             limpo.ships[&id_l].3.weapon.damage
         );
+    }
+}
+
+#[cfg(test)]
+mod habilidades_e_consumiveis {
+    //! Habilidades e consumíveis precisam ter EFEITO, não só ícone.
+    //!
+    //! Antes destes testes: só o Dash era destravado, então as teclas 2
+    //! e 3 do HUD não faziam nada; PEM e Reparo existiam no enum e na
+    //! interface sem nenhuma nave sendo afetada. E os consumíveis
+    //! `repair_kit`/`shield_cell` eram vendidos na loja sem que o
+    //! servidor conhecesse os ids.
+
+    use super::*;
+    use sim_core::ship::consumables::ConsumableSlot;
+
+    fn carga(id: &str, n: u32) -> ConsumableSlot {
+        ConsumableSlot {
+            template_id: id.to_string(),
+            charges: n,
+        }
+    }
+
+    fn mundo_com(jogadores: &[u32]) -> World {
+        let mut w = World::new();
+        for p in jogadores {
+            w.spawn_player_ship(*p, format!("p{p}"));
+            // Uma nave sem loadout nasce com `hull_max` 100 — cheia. Sem
+            // equipar nada, "curar" não teria o que fazer e os testes de
+            // cura passariam por acidente, sem exercitar nada.
+            w.apply_loadout(*p, &["railgun_s".to_string(), "engine_mk3".to_string()]);
+        }
+        w
+    }
+
+    #[test]
+    fn as_tres_habilidades_ficam_destravadas() {
+        // O defeito original: só Dash era destravado no spawn, então
+        // apertar 2 ou 3 não produzia nem cooldown.
+        let w = mundo_com(&[1]);
+        let id = w.player_ships[&1];
+        let s = &w.ships[&id].3;
+        for skill in [ActiveSkill::Dash, ActiveSkill::Emp, ActiveSkill::Repair] {
+            assert!(
+                s.skills.skills.contains_key(&skill),
+                "{skill:?} deveria estar destravada"
+            );
+        }
+    }
+
+    #[test]
+    fn reparo_cura_o_casco_ao_longo_do_tempo() {
+        let mut w = mundo_com(&[1]);
+        let id = w.player_ships[&1];
+        w.ships.get_mut(&id).unwrap().3.hull_hp = 100.0;
+
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Repair), None);
+        w.step(1.0 / 30.0);
+        let depois_de_1_tick = w.ships[&id].3.hull_hp;
+        assert!(depois_de_1_tick > 100.0, "deveria começar a curar");
+
+        for _ in 0..60 {
+            w.step(1.0 / 30.0);
+        }
+        assert!(
+            w.ships[&id].3.hull_hp > depois_de_1_tick + 50.0,
+            "a cura tem que continuar durante o efeito"
+        );
+    }
+
+    #[test]
+    fn reparo_para_quando_o_efeito_acaba() {
+        // O erro fácil aqui é curar durante o COOLDOWN (20s) em vez de
+        // durante o efeito (5s), o que quadruplicaria a cura.
+        let mut w = mundo_com(&[1]);
+        let id = w.player_ships[&1];
+        w.ships.get_mut(&id).unwrap().3.hull_hp = 100.0;
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Repair), None);
+
+        for _ in 0..(30 * 6) {
+            w.step(1.0 / 30.0);
+        }
+        let ao_fim = w.ships[&id].3.hull_hp;
+        for _ in 0..(30 * 5) {
+            w.step(1.0 / 30.0);
+        }
+        assert!(
+            (w.ships[&id].3.hull_hp - ao_fim).abs() < 1.0,
+            "não pode continuar curando depois dos 5s de efeito"
+        );
+    }
+
+    #[test]
+    fn pem_paralisa_inimigo_proximo() {
+        let mut w = mundo_com(&[1, 2]);
+        let alvo = w.player_ships[&2];
+        // Aproxima o alvo: o raio do PEM é 220.
+        let p = w.ships[&w.player_ships[&1]].0;
+        w.ships.get_mut(&alvo).unwrap().0 = Position {
+            x: p.x + 50.0,
+            y: p.y,
+            z: p.z,
+        };
+
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None);
+        w.step(1.0 / 30.0);
+
+        assert!(
+            w.ships[&alvo].3.emp_remaining > 0.0,
+            "inimigo no raio deveria ficar paralisado"
+        );
+    }
+
+    #[test]
+    fn pem_nao_atinge_quem_usou() {
+        let mut w = mundo_com(&[1]);
+        let id = w.player_ships[&1];
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None);
+        w.step(1.0 / 30.0);
+        assert_eq!(w.ships[&id].3.emp_remaining, 0.0);
+    }
+
+    #[test]
+    fn pem_nao_alcanca_alvo_distante() {
+        let mut w = mundo_com(&[1, 2]);
+        let alvo = w.player_ships[&2];
+        let p = w.ships[&w.player_ships[&1]].0;
+        w.ships.get_mut(&alvo).unwrap().0 = Position {
+            x: p.x + 5000.0,
+            y: p.y,
+            z: p.z,
+        };
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None);
+        w.step(1.0 / 30.0);
+        assert_eq!(w.ships[&alvo].3.emp_remaining, 0.0);
+    }
+
+    #[test]
+    fn nave_sob_pem_nao_acelera_nem_atira() {
+        let mut w = mundo_com(&[1]);
+        let id = w.player_ships[&1];
+        w.ships.get_mut(&id).unwrap().3.emp_remaining = 3.0;
+        let projeteis_antes = w.projectiles.len();
+
+        w.set_input(1, 0.0, 0.0, 0.0, 1.0, true, 0.0, None, None);
+        for _ in 0..10 {
+            w.step(1.0 / 30.0);
+        }
+
+        let v = w.ships[&id].1;
+        let velocidade = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt();
+        assert!(velocidade < 1.0, "empuxo deveria estar cortado: {velocidade}");
+        assert_eq!(
+            w.projectiles.len(),
+            projeteis_antes,
+            "não pode atirar sob PEM"
+        );
+    }
+
+    #[test]
+    fn consumivel_de_reparo_cura_na_hora() {
+        let mut w = mundo_com(&[1]);
+        let id = w.player_ships[&1];
+        w.apply_consumables(1, &[carga("repair_kit", 2)]);
+        w.ships.get_mut(&id).unwrap().3.hull_hp = 100.0;
+
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0));
+        w.step(1.0 / 30.0);
+
+        // Instantâneo, ao contrário da skill de reparo: é o que o
+        // jogador compra com a escassez da carga.
+        assert!(w.ships[&id].3.hull_hp > 400.0);
+        assert_eq!(w.ships[&id].3.belt.charges_at(0), 1);
+    }
+
+    #[test]
+    fn celula_de_escudo_restaura_escudo_e_nao_casco() {
+        let mut w = mundo_com(&[1]);
+        let id = w.player_ships[&1];
+        w.apply_consumables(1, &[carga("shield_cell", 1)]);
+        {
+            let s = &mut w.ships.get_mut(&id).unwrap().3;
+            s.shield_max = 500.0;
+            s.shield_hp = 0.0;
+            s.hull_hp = 200.0;
+        }
+
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0));
+        w.step(1.0 / 30.0);
+
+        assert!(w.ships[&id].3.shield_hp > 200.0, "escudo deveria subir");
+        assert_eq!(w.ships[&id].3.hull_hp, 200.0, "casco não é afetado");
+    }
+
+    #[test]
+    fn consumivel_sem_carga_nao_faz_nada() {
+        let mut w = mundo_com(&[1]);
+        let id = w.player_ships[&1];
+        w.apply_consumables(1, &[carga("repair_kit", 1)]);
+        w.ships.get_mut(&id).unwrap().3.hull_hp = 100.0;
+
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0));
+        w.step(1.0 / 30.0);
+        let apos_primeiro = w.ships[&id].3.hull_hp;
+
+        // Passa o cooldown e tenta de novo, já sem carga.
+        for _ in 0..(30 * 7) {
+            w.step(1.0 / 30.0);
+        }
+        w.ships.get_mut(&id).unwrap().3.hull_hp = apos_primeiro;
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0));
+        w.step(1.0 / 30.0);
+
+        assert_eq!(w.ships[&id].3.hull_hp, apos_primeiro);
+    }
+
+    #[test]
+    fn cinto_ignora_id_desconhecido() {
+        let mut w = mundo_com(&[1]);
+        let id = w.player_ships[&1];
+        w.apply_consumables(1, &[carga("cura_infinita", 99)]);
+        assert!(w.ships[&id].3.belt.slots.is_empty());
+    }
+
+    #[test]
+    fn usar_consumivel_emite_evento_com_as_cargas_restantes() {
+        // O HUD depende disso: contar localmente divergiria na primeira
+        // recusa por cooldown.
+        let mut w = mundo_com(&[1]);
+        w.apply_consumables(1, &[carga("repair_kit", 3)]);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0));
+        w.step(1.0 / 30.0);
+
+        let evento = w.events.iter().find_map(|e| match e {
+            crate::net::protocol::ServerMsg::ConsumableUsed { charges_left, .. } => {
+                Some(*charges_left)
+            }
+            _ => None,
+        });
+        assert_eq!(evento, Some(2));
     }
 }

@@ -8,7 +8,7 @@ import {
   encodeClientMsg,
   decodeServerMsg,
 } from './protocol';
-import type { ClientMsg, ServerMsg } from './protocol';
+import type { ClientMsg, ConsumableSlot, ServerMsg } from './protocol';
 
 export interface NetClient {
   /** Envia uma mensagem. Se o socket não estiver aberto, descarta. */
@@ -37,6 +37,13 @@ export interface NetClientOptions {
    * decorativa — o jogador gastava pontos e o tiro não mudava.
    */
   skills?: string[];
+  /**
+   * Consumíveis levados para a arena, vindos do inventário da conta.
+   *
+   * O servidor descarta ids desconhecidos e limita os slots, então isto
+   * é uma declaração, não uma concessão.
+   */
+  consumables?: ConsumableSlot[];
   reconnectDelayMs?: number;
   onStatus?: (status: 'connecting' | 'open' | 'closed') => void;
 }
@@ -63,6 +70,7 @@ export function connect(opts: NetClientOptions): NetClient {
           protocol: PROTOCOL_VERSION,
           loadout: opts.loadout ?? [],
           skills: opts.skills ?? [],
+          consumables: opts.consumables ?? [],
         },
       };
       ws?.send(encodeClientMsg(join));

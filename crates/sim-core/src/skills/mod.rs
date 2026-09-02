@@ -30,6 +30,29 @@ impl ActiveSkill {
             ActiveSkill::Repair => 5.0,
         }
     }
+
+    /// Alcance do efeito sobre OUTRAS naves, em unidades. 0 = só a si.
+    ///
+    /// O PEM é a única com alcance: as outras duas agem na própria nave.
+    pub fn radius(&self) -> f32 {
+        match self {
+            ActiveSkill::Emp => 220.0,
+            _ => 0.0,
+        }
+    }
+
+    /// Casco curado por segundo enquanto o efeito dura.
+    ///
+    /// Só o Reparo cura, e devagar de propósito: a cura instantânea é o
+    /// papel do consumível, que é escasso. A skill volta sempre, então
+    /// ela paga com tempo exposto — cinco segundos sem poder confiar em
+    /// escapar é uma decisão de verdade no meio de um combate.
+    pub fn heal_per_sec(&self) -> f32 {
+        match self {
+            ActiveSkill::Repair => 55.0,
+            _ => 0.0,
+        }
+    }
 }
 
 /// Estado de uma habilidade em cooldown/ativação.
@@ -52,6 +75,19 @@ impl SkillManager {
         Self {
             skills: HashMap::new(),
         }
+    }
+
+    /// Segundos restantes do EFEITO de uma habilidade (0 se inativa).
+    ///
+    /// Diferente do cooldown: o efeito é o intervalo em que a skill está
+    /// agindo (a cura do Reparo acontecendo), enquanto o cooldown é a
+    /// espera até poder usar de novo. Confundir os dois faria a cura
+    /// durar os 20s do cooldown em vez dos 5s do efeito.
+    pub fn effect_remaining(&self, skill: ActiveSkill) -> f32 {
+        self.skills
+            .get(&skill)
+            .map(|s| s.effect_remaining)
+            .unwrap_or(0.0)
     }
 
     /// Desbloqueia uma habilidade para uso.

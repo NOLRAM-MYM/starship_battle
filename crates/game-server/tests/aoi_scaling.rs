@@ -118,7 +118,7 @@ fn indice_player_encontra_a_nave_sem_varrer() {
         w.spawn_player_ship(pid, format!("p{pid}"));
     }
     // O input tem que chegar exatamente na nave do jogador 37.
-    w.set_input(37, 1.0, 0.0, 0.0, 1.0, true, 0.0, None);
+    w.set_input(37, 1.0, 0.0, 0.0, 1.0, true, 0.0, None, None);
 
     let id = *w.player_ships.get(&37).expect("índice tem o player 37");
     let (_, _, _, ship) = &w.ships[&id];
@@ -140,7 +140,7 @@ fn input_de_player_inexistente_e_ignorado() {
     let mut w = World::new();
     w.spawn_player_ship(1, "a".into());
     // Não deve entrar em pânico nem afetar ninguém.
-    w.set_input(999, 1.0, 0.0, 0.0, 1.0, true, 0.0, None);
+    w.set_input(999, 1.0, 0.0, 0.0, 1.0, true, 0.0, None, None);
     let (_, _, _, ship) = w.ships.values().next().unwrap();
     assert_eq!(ship.thrust_input, 0.0);
 }
@@ -183,7 +183,7 @@ fn colisao_por_grade_ainda_acerta_o_alvo() {
     }
     let hp_antes = w.ships[&alvo].3.hull_hp;
 
-    w.set_input(1, 0.0, 0.0, 0.0, 0.0, true, 0.0, None);
+    w.set_input(1, 0.0, 0.0, 0.0, 0.0, true, 0.0, None, None);
     // Tempo suficiente para o projétil percorrer os 40m (100 m/s).
     for _ in 0..30 {
         w.step(1.0 / 30.0);

@@ -26,6 +26,8 @@ export type GameAction =
   | 'skill1'
   | 'skill2'
   | 'skill3'
+  | 'consumable1'
+  | 'consumable2'
   | 'cycleTarget'
   | 'toggleGravityLines'
   | 'toHangar';
@@ -57,6 +59,8 @@ export const ACTIONS: readonly ActionMeta[] = [
   { action: 'skill1', label: 'Habilidade 1 — Impulso', group: 'Combate' },
   { action: 'skill2', label: 'Habilidade 2 — PEM', group: 'Combate' },
   { action: 'skill3', label: 'Habilidade 3 — Reparo', group: 'Combate' },
+  { action: 'consumable1', label: 'Consumível 1', group: 'Combate' },
+  { action: 'consumable2', label: 'Consumível 2', group: 'Combate' },
   { action: 'cycleTarget', label: 'Trocar de alvo', group: 'Interface' },
   {
     action: 'toggleGravityLines',
@@ -87,6 +91,10 @@ export const DEFAULT_KEYMAP: Keymap = {
   skill1: 'Digit1',
   skill2: 'Digit2',
   skill3: 'Digit3',
+  // 4 e 5 seguem as três de habilidade: a mão já está sobre a fileira,
+  // e o consumível é decidido no mesmo instante que uma habilidade.
+  consumable1: 'Digit4',
+  consumable2: 'Digit5',
   cycleTarget: 'Tab',
   toggleGravityLines: 'KeyG',
   toHangar: 'Escape',

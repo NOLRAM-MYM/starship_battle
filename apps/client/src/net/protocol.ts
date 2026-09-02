@@ -9,7 +9,7 @@
  *   - bool: u8 (0/1)
  */
 
-export const PROTOCOL_VERSION = 8 as const;
+export const PROTOCOL_VERSION = 9 as const;
 /**
  * Precisa bater com `SNAPSHOT_RATE_HZ` do servidor — é o intervalo que a
  * interpolação usa como alvo. O servidor tica a 30Hz e envia snapshot a
@@ -33,6 +33,8 @@ export interface JoinMsg {
   loadout: string[];
   /** Nós da árvore de skills desbloqueados pela conta. */
   skills: string[];
+  /** Consumíveis levados para a arena, com as cargas. */
+  consumables: ConsumableSlot[];
 }
 export interface InputMsg {
   /** -1..1 — guinada (yaw). */
@@ -51,6 +53,8 @@ export interface InputMsg {
    * arma equipada e satura o valor. O cliente só relata o tempo.
    */
   fireCharge: number;
+  /** Slot de consumível a usar neste tick (0 ou 1), ou null. */
+  useConsumable: number | null;
   skill: ActiveSkill | null;
 }
 export interface PingMsg {
@@ -157,6 +161,26 @@ export interface XpGainedMsg {
   reason: string;
 }
 export type ActiveSkill = 'Dash' | 'Emp' | 'Repair';
+
+/** Uma carga de consumível equipada. */
+export interface ConsumableSlot {
+  templateId: string;
+  charges: number;
+}
+
+/**
+ * Consumível usado por alguma nave.
+ *
+ * `chargesLeft` vem do servidor porque é ele quem decide se o uso valeu
+ * (cooldown, carga zerada). Um contador mantido só no cliente
+ * divergiria na primeira recusa.
+ */
+export interface ConsumableUsedMsg {
+  entityId: number;
+  slot: number;
+  vfx: number;
+  chargesLeft: number;
+}
 export interface SkillActivatedMsg {
   entity_id: number;
   skill: ActiveSkill;
@@ -228,6 +252,7 @@ export type ServerMsg =
   | { type: 'EntityDestroyed'; payload: EntityDestroyedMsg }
   | { type: 'XpGained'; payload: XpGainedMsg }
   | { type: 'SkillActivated'; payload: SkillActivatedMsg }
+  | { type: 'ConsumableUsed'; payload: ConsumableUsedMsg }
   | { type: 'Vfx'; payload: VfxMsg }
   | { type: 'Pong'; payload: PongMsg }
   | { type: 'Error'; payload: ErrorMsg };
@@ -248,6 +273,8 @@ const SERVER_VARIANT = {
   Vfx: 7,
   Pong: 8,
   Error: 9,
+  // v9, acrescentada no FIM: as anteriores mantêm a discriminante.
+  ConsumableUsed: 10,
 } as const;
 const ENTITY_KIND = {
   Ship: 0, Projectile: 1, Npc: 2, Asteroid: 3, Anomaly: 4, Wreck: 5,
@@ -538,6 +565,14 @@ export function encodeClientMsg(msg: ClientMsg): Uint8Array {
       const sk = msg.payload.skills;
       w.writeU64(sk.length);
       for (const id of sk) w.writeString(id);
+      // v9: cinto de consumíveis. Cada slot é `{ String, u32 }` — a
+      // mesma ordem de campos de `ConsumableSlot` em Rust.
+      const cs = msg.payload.consumables;
+      w.writeU64(cs.length);
+      for (const c of cs) {
+        w.writeString(c.templateId);
+        w.writeU32(c.charges);
+      }
       break;
     }
     case 'Input':
@@ -555,6 +590,15 @@ export function encodeClientMsg(msg: ClientMsg): Uint8Array {
       } else {
         w.writeU8(1);
         writeActiveSkill(w, msg.payload.skill);
+      }
+      // v9: slot de consumível. Só o ÍNDICE — o servidor sabe o que
+      // está em cada slot e quantas cargas restam. Mandar o id do item
+      // daqui deixaria o cliente escolher o efeito.
+      if (msg.payload.useConsumable === null || msg.payload.useConsumable === undefined) {
+        w.writeU8(0);
+      } else {
+        w.writeU8(1);
+        w.writeU8(msg.payload.useConsumable);
       }
       break;
     case 'Ping':
@@ -630,6 +674,16 @@ export function decodeServerMsg(buf: ArrayBuffer): ServerMsg {
         payload: {
           entity_id: r.readU32(),
           skill: readActiveSkill(r),
+        },
+      };
+    case SERVER_VARIANT.ConsumableUsed:
+      return {
+        type: 'ConsumableUsed',
+        payload: {
+          entityId: r.readU32(),
+          slot: r.readU8(),
+          vfx: r.readU8(),
+          chargesLeft: r.readU32(),
         },
       };
     case SERVER_VARIANT.Vfx:

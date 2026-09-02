@@ -59,6 +59,8 @@ pub enum PlayerCommand {
         loadout: Vec<String>,
         /// Nós da árvore de skills desbloqueados.
         skills: Vec<String>,
+        /// Consumíveis levados para a arena.
+        consumables: Vec<sim_core::ship::consumables::ConsumableSlot>,
     },
     Input {
         player_id: u32,
@@ -70,6 +72,8 @@ pub enum PlayerCommand {
         /// Segundos de gatilho segurado (tiro carregado).
         fire_charge: f32,
         skill: Option<sim_core::skills::ActiveSkill>,
+        /// Slot de consumível pedido neste pacote.
+        use_consumable: Option<u8>,
     },
     Leave {
         player_id: u32,
@@ -244,9 +248,20 @@ impl ServerState {
         fire: bool,
         fire_charge: f32,
         skill: Option<sim_core::skills::ActiveSkill>,
+        use_consumable: Option<u8>,
     ) {
         let mut world = self.world.write().await;
-        world.set_input(player_id, steer, pitch, roll, thrust, fire, fire_charge, skill);
+        world.set_input(
+            player_id,
+            steer,
+            pitch,
+            roll,
+            thrust,
+            fire,
+            fire_charge,
+            skill,
+            use_consumable,
+        );
     }
 }
 
@@ -299,11 +314,12 @@ pub async fn run_simulation_loop(state: ServerState) {
 
             for cmd in command_buf.drain(..) {
                 match cmd {
-                    PlayerCommand::Join { player_id, name, loadout, skills } => {
+                    PlayerCommand::Join { player_id, name, loadout, skills, consumables } => {
                         world.spawn_player_ship(player_id, name);
                         // O loadout é aplicado logo após o spawn: os
                         // números vêm do catálogo do servidor.
                         world.apply_loadout_and_skills(player_id, &loadout, &skills);
+                        world.apply_consumables(player_id, &consumables);
                     }
                     PlayerCommand::Input {
                         player_id,
@@ -314,9 +330,18 @@ pub async fn run_simulation_loop(state: ServerState) {
                         fire,
                         fire_charge,
                         skill,
+                        use_consumable,
                     } => {
                         world.set_input(
-                            player_id, steer, pitch, roll, thrust, fire, fire_charge, skill,
+                            player_id,
+                            steer,
+                            pitch,
+                            roll,
+                            thrust,
+                            fire,
+                            fire_charge,
+                            skill,
+                            use_consumable,
                         );
                     }
                     PlayerCommand::Leave { player_id } => {
@@ -497,7 +522,7 @@ mod tests {
         let _ship = state.spawn_player_ship(7, "alpha".into()).await;
 
         state
-            .set_player_input(7, 0.5, 0.0, 0.0, 0.8, true, 0.0, Some(sim_core::skills::ActiveSkill::Dash))
+            .set_player_input(7, 0.5, 0.0, 0.0, 0.8, true, 0.0, Some(sim_core::skills::ActiveSkill::Dash), None)
             .await;
 
         let world = state.world.read().await;
@@ -516,7 +541,7 @@ mod tests {
     async fn set_player_input_clamps_values() {
         let state = ServerState::new();
         let _ = state.spawn_player_ship(1, "x".into()).await;
-        state.set_player_input(1, 5.0, 0.0, 0.0, -1.0, false, 0.0, None).await;
+        state.set_player_input(1, 5.0, 0.0, 0.0, -1.0, false, 0.0, None, None).await;
         let world = state.world.read().await;
         let (_, _, _, ship) = world
             .ships
@@ -531,7 +556,7 @@ mod tests {
     async fn input_drives_movement_in_simulation() {
         let state = ServerState::new();
         let _ = state.spawn_player_ship(42, "y".into()).await;
-        state.set_player_input(42, 0.0, 0.0, 0.0, 1.0, false, 0.0, None).await;
+        state.set_player_input(42, 0.0, 0.0, 0.0, 1.0, false, 0.0, None, None).await;
 
         // Avança 30 ticks (1s a 30Hz).
         for _ in 0..30 {
@@ -581,6 +606,7 @@ mod tests {
             name: "queued".into(),
             loadout: vec!["railgun_s".into()],
             skills: vec![],
+            consumables: vec![],
         });
 
         // Simula um tick do loop: drena e aplica.

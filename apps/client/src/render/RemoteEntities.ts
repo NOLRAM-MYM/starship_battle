@@ -25,6 +25,7 @@ import {
 import { createShipMesh, type ChassisSpec, type ShipMesh } from './ShipMesh';
 import type { VfxSystem } from './effects';
 import { createProjectileVisual, type ProjectileVisual } from './ProjectileLook';
+import { createSkillFx, type SkillFxHandle, type SkillFxKind } from './SkillFx';
 
 /** Cores por relação com o jogador. */
 const COLOR_SELF = { hull: 0x2e5f7a, glow: 0x45e5a4 };
@@ -58,6 +59,14 @@ export class RemoteEntityRenderer {
   private localSpec: ChassisSpec | null = null;
   /** 0..1 — carga do gatilho da nave local, para o brilho no cano. */
   private localCharge = 0;
+  /**
+   * Animações de habilidade, presas às naves.
+   *
+   * Vive aqui porque só este renderizador sabe qual grupo 3D pertence a
+   * qual `serverId` — e o efeito precisa acompanhar a nave, não ficar
+   * parado onde a habilidade foi acionada.
+   */
+  private readonly skillFx: SkillFxHandle = createSkillFx();
   private chargeOrb: THREE.Mesh | null = null;
   private chargeMat: THREE.MeshBasicMaterial | null = null;
   private chargeLight: THREE.PointLight | null = null;
@@ -95,6 +104,19 @@ export class RemoteEntityRenderer {
     this.localCharge = Math.min(1, Math.max(0, t));
   }
 
+  /**
+   * Toca a animação de uma habilidade na nave indicada.
+   *
+   * Vale para QUALQUER nave, não só a do jogador: ver o inimigo usar um
+   * PEM ou o aliado se curando muda a decisão de avançar ou recuar, e
+   * antes isso era completamente invisível.
+   */
+  playSkillFx(serverId: number, kind: SkillFxKind): void {
+    const entry = this.entries.get(serverId);
+    if (!entry) return;
+    this.skillFx.play(kind, entry.group);
+  }
+
   setOnLocalHit(cb: (severity: number) => void): void {
     this.onLocalHit = cb;
   }
@@ -104,6 +126,7 @@ export class RemoteEntityRenderer {
    * (depois de `applySnapshot`). `dt` alimenta flashes e rastros.
    */
   sync(dt = 0.016): void {
+    this.skillFx.update(dt);
     const eids = RemoteEntityRenderer.remotesQuery(world) as readonly number[];
     const liveServerIds = new Set<number>();
     const localId = this.localId();

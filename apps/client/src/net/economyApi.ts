@@ -109,6 +109,17 @@ export async function fetchWallet(): Promise<Wallet> {
   return wallet;
 }
 
+/**
+ * Catálogo completo de itens.
+ *
+ * Necessário para traduzir o `itemId` do inventário no `code` do
+ * template — o inventário não carrega o código.
+ */
+export async function fetchItems(): Promise<Item[]> {
+  const { items } = await request<{ items: Item[] }>('/economy/items');
+  return items;
+}
+
 export async function fetchShop(): Promise<ShopEntry[]> {
   const { shop } = await request<{ shop: ShopEntry[] }>('/economy/shop');
   return shop;

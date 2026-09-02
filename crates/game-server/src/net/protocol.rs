@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// v6: `Input` ganhou `fire_charge` (tiro carregado) e o mundo ganhou
 /// vórtices de dobra como tipo de entidade.
-pub const PROTOCOL_VERSION: u16 = 8;
+pub const PROTOCOL_VERSION: u16 = 9;
 
 /// Identificadores de efeito visual em `ServerMsg::Vfx`.
 ///
@@ -30,6 +30,14 @@ pub const VFX_MUZZLE: u8 = 1;
 pub const VFX_IMPACT: u8 = 2;
 pub const VFX_EXPLOSION_SHIP: u8 = 3;
 pub const VFX_EXPLOSION_LARGE: u8 = 4;
+/// Pulso eletromagnético: onda de choque expandindo.
+pub const VFX_EMP: u8 = 5;
+// Não há VFX para Reparo nem para Dobra: as duas são animações PRESAS À
+// NAVE, e `SkillActivated` já carrega o `entity_id`, então o cliente
+// consegue ancorá-las na nave certa e acompanhá-la enquanto ela se move.
+// Uma mensagem `Vfx` leva só uma posição, que congelaria o efeito no
+// ponto onde a habilidade foi acionada. O PEM é a exceção porque a onda
+// de choque de fato nasce num ponto fixo do espaço.
 
 /// Raio de interesse (AOI) padrão, em unidades de mundo.
 ///
@@ -87,6 +95,12 @@ pub enum ClientMsg {
         /// nada, e inventar um id real só dá o bônus que a conta
         /// deveria ter (a API é quem valida a compra do nó).
         skills: Vec<String>,
+        /// Consumíveis levados para a arena, com as cargas.
+        ///
+        /// Vêm do inventário da conta. O servidor descarta ids que não
+        /// conhece e limita o número de slots, então declarar cargas a
+        /// mais não rende nada além do que o cinto aceita.
+        consumables: Vec<sim_core::ship::consumables::ConsumableSlot>
     },
     /// Input contínuo (enviado a ~30Hz).
     Input {
@@ -108,6 +122,12 @@ pub enum ClientMsg {
         fire_charge: f32,
         /// Habilidade solicitada neste tick.
         skill: Option<sim_core::skills::ActiveSkill>,
+        /// Slot de consumível a usar neste tick (0 ou 1).
+        ///
+        /// Só o índice: o servidor sabe o que está em cada slot e
+        /// quantas cargas restam. Mandar o id do item daqui deixaria o
+        /// cliente escolher o efeito.
+        use_consumable: Option<u8>,
     },
     /// Heartbeat (liveness).
     Ping { nonce: u32 },
@@ -161,6 +181,13 @@ pub enum ServerMsg {
     Pong { nonce: u32 },
     /// Erro de protocolo.
     Error { reason: String },
+    /// Consumível usado por uma nave.
+    ///
+    /// Acrescentada no FIM do enum para não deslocar as discriminantes
+    /// anteriores. Carrega `charges_left` porque o servidor é quem
+    /// decide se o uso valeu (cooldown, carga zerada); um contador
+    /// mantido só no cliente divergiria na primeira recusa.
+    ConsumableUsed { entity_id: u32, slot: u8, vfx: u8, charges_left: u32 }
 }
 
 /// Lote de entidades estáticas (asteroides, anomalias, destroços).
@@ -331,6 +358,7 @@ mod tests {
             fire: true,
             fire_charge: 1.25,
             skill: Some(sim_core::skills::ActiveSkill::Emp),
+            use_consumable: None,
         };
         let bytes = bincode::serialize(&original).unwrap();
         let decoded: ClientMsg = bincode::deserialize(&bytes).unwrap();
@@ -497,12 +525,12 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_is_v8() {
+    fn protocol_version_is_v9() {
         // v2: payloads por tipo. v3: estáticos por AOI. v4: pitch/roll.
         // v5: loadout no Join + corpos celestes. v6: tiro carregado +
         // vórtices de dobra. v7: aparência do projétil (arma + carga).
-        // v8: skills no Join.
-        assert_eq!(PROTOCOL_VERSION, 8);
+        // v8: skills no Join. v9: consumíveis no Join e no Input.
+        assert_eq!(PROTOCOL_VERSION, 9);
     }
 
     #[test]

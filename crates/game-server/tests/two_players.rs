@@ -123,6 +123,7 @@ async fn dois_jogadores_se_veem_e_se_movem() {
             protocol: PROTOCOL_VERSION,
             loadout: vec!["engine_mk3".into(), "railgun_s".into()],
             skills: vec![],
+            consumables: vec![],
         },
     )
     .await;
@@ -141,6 +142,7 @@ async fn dois_jogadores_se_veem_e_se_movem() {
             protocol: PROTOCOL_VERSION,
             loadout: vec!["engine_mk3".into(), "railgun_s".into()],
             skills: vec![],
+            consumables: vec![],
         },
     )
     .await;
@@ -159,6 +161,7 @@ async fn dois_jogadores_se_veem_e_se_movem() {
                 fire: false,
                 fire_charge: 0.0,
                 skill: None,
+                use_consumable: None,
             },
         )
         .await;
@@ -174,6 +177,7 @@ async fn dois_jogadores_se_veem_e_se_movem() {
                 fire: false,
                 fire_charge: 0.0,
                 skill: None,
+                use_consumable: None,
             },
         )
         .await;
@@ -283,6 +287,7 @@ async fn entidades_estaticas_chegam_por_world_chunk_e_nao_no_snapshot() {
             protocol: PROTOCOL_VERSION,
             loadout: vec!["engine_mk3".into(), "railgun_s".into()],
             skills: vec![],
+            consumables: vec![],
         },
     )
     .await;
@@ -339,6 +344,7 @@ async fn cliente_com_protocolo_antigo_e_recusado() {
             protocol: PROTOCOL_VERSION - 1,
             loadout: vec!["engine_mk3".into(), "railgun_s".into()],
             skills: vec![],
+            consumables: vec![],
         },
     )
     .await;

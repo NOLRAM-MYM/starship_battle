@@ -37,6 +37,8 @@ import { mountKeybindScreen } from './ui/KeybindScreen';
 import { connect } from './net/client';
 import { chargeMultiplier, primaryWeapon } from './data/weapons';
 import { fetchProgression, skillNodeIds } from './net/progressionApi';
+import { equippedFromInventory } from './data/consumables';
+import { fetchInventory, fetchItems } from './net/economyApi';
 import { createInputController } from './input/keyboard';
 import { startInputLoop } from './input/inputLoop';
 import { isXrSupported, requestVrSession, endSession } from './xr/session.js';
@@ -326,6 +328,15 @@ async function bootstrap(): Promise<void> {
     // --- HUD / áudio / performance ---
     const hudState = createHudState();
     hudState.callsign = profile.callsign;
+
+    // Consumíveis ANTES de montar o HUD: os slots são construídos uma
+    // vez, na montagem, então preencher depois deixaria a fileira vazia
+    // mesmo com cargas no inventário. Falha na API não impede o voo —
+    // sem cargas, o jogador entra como entrava antes.
+    const cintoEquipado = await Promise.all([fetchInventory(), fetchItems()])
+      .then(([inv, itens]) => equippedFromInventory(inv, itens))
+      .catch(() => []);
+    hudState.consumables = cintoEquipado.map((c) => ({ name: c.nome, charges: c.charges }));
     // Preferência das linhas de gravidade, lembrada entre partidas.
     const LINHAS_KEY = 'batle.gravityLines';
     let linhasLigadas = true;
@@ -454,6 +465,9 @@ async function bootstrap(): Promise<void> {
     // sem skills, valem os números puros do catálogo.
     const progressao = await fetchProgression();
     const skillsDaConta = skillNodeIds(progressao);
+
+    // Consumíveis do inventário. Falha na API não impede o voo — sem
+    // cargas, o jogador entra como entrava antes.
     if (skillsDaConta.length > 0) {
       console.info(`[net] ${skillsDaConta.length} skills aplicadas ao combate`);
     }
@@ -464,6 +478,7 @@ async function bootstrap(): Promise<void> {
       // Só os ids, em ordem de slot: o servidor resolve os números.
       loadout: slots.map((sl) => sl.templateId),
       skills: skillsDaConta,
+      consumables: cintoEquipado.map((c) => ({ templateId: c.templateId, charges: c.charges })),
       onStatus: (s) => console.info(`[net] status=${s}`),
     });
 
@@ -550,6 +565,25 @@ async function bootstrap(): Promise<void> {
             const skill = hudState.skills.find((s) => s.id === msg.payload.skill);
             if (skill) skill.cooldownEnd = Date.now() + skill.cooldownTotal;
           }
+          // A animação vale para QUALQUER nave: antes só o cooldown do
+          // próprio jogador reagia, e usar uma habilidade não produzia
+          // efeito nenhum na tela — nem para quem usou.
+          remoteRenderer.playSkillFx(msg.payload.entity_id, msg.payload.skill);
+          break;
+        }
+        case 'ConsumableUsed': {
+          const myEid = (globalThis as { __localEntityId?: number }).__localEntityId;
+          if (msg.payload.entityId === myEid) {
+            // As cargas vêm do SERVIDOR: ele é quem decide se o uso
+            // valeu (cooldown, carga zerada), e um contador local
+            // divergiria na primeira recusa.
+            const slot = hudState.consumables[msg.payload.slot];
+            if (slot) slot.charges = msg.payload.chargesLeft;
+          }
+          remoteRenderer.playSkillFx(
+            msg.payload.entityId,
+            msg.payload.vfx === 1 ? 'consumable-shield' : 'consumable-repair',
+          );
           break;
         }
         case 'Vfx': {

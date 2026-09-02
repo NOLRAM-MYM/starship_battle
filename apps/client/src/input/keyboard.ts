@@ -45,6 +45,8 @@ export interface InputState {
   defend: boolean;
   /** Edge-trigger. */
   skill: 'Dash' | 'Emp' | 'Repair' | null;
+  /** Edge-trigger: índice do slot de consumível pedido (0 ou 1). */
+  useConsumable: number | null;
 }
 
 export interface InputController {
@@ -80,6 +82,7 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
   let fireHeldSince: number | null = null;
   let pendingDefend = false;
   let pendingSkill: 'Dash' | 'Emp' | 'Repair' | null = null;
+  let pendingConsumable: number | null = null;
 
   function emit(action: GameAction): void {
     for (const cb of listeners.get(action) ?? []) cb();
@@ -105,6 +108,8 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
       if (action === 'defend') pendingDefend = true;
       const skill = SKILL_OF[action];
       if (skill) pendingSkill = skill;
+      if (action === 'consumable1') pendingConsumable = 0;
+      if (action === 'consumable2') pendingConsumable = 1;
       emit(action);
     }
     held.add(action);
@@ -126,8 +131,10 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
   function onBlur(): void {
     held.clear();
     // Perder o foco com o gatilho apertado não deve virar um tiro
-    // carregado fantasma ao voltar.
+    // carregado fantasma ao voltar. O mesmo vale para um consumível
+    // pedido e não consumido: gastaria uma carga sozinho.
     fireHeldSince = null;
+    pendingConsumable = null;
   }
 
   let attached: { target: Window } | null = null;
@@ -167,6 +174,8 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
       pendingDefend = false;
       const skill = pendingSkill;
       pendingSkill = null;
+      const useConsumable = pendingConsumable;
+      pendingConsumable = null;
 
       return {
         steer: axis('yawLeft', 'yawRight'),
@@ -179,6 +188,7 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
         fireCharge,
         defend,
         skill,
+        useConsumable,
       };
     },
 

@@ -44,6 +44,7 @@ describe('InputController', () => {
       fireCharge: 0,
       defend: false,
       skill: null,
+      useConsumable: null,
     });
   });
 
@@ -131,6 +132,29 @@ describe('InputController', () => {
     down('KeyE');
     expect(ctrl.read().defend).toBe(true);
     expect(ctrl.read().defend).toBe(false);
+  });
+
+  it('4 e 5 pedem os consumíveis 1 e 2', () => {
+    // A loja vendia consumíveis desde sempre e não havia tecla nenhuma
+    // para usá-los dentro do jogo.
+    down('Digit4');
+    expect(ctrl.read().useConsumable).toBe(0);
+    up('Digit4');
+    down('Digit5');
+    expect(ctrl.read().useConsumable).toBe(1);
+  });
+
+  it('o pedido de consumível é consumido uma vez só', () => {
+    // Repetir gastaria várias cargas com um toque.
+    down('Digit4');
+    expect(ctrl.read().useConsumable).toBe(0);
+    expect(ctrl.read().useConsumable).toBeNull();
+  });
+
+  it('perder o foco cancela um consumível pedido', () => {
+    down('Digit4');
+    window.dispatchEvent(new Event('blur'));
+    expect(ctrl.read().useConsumable).toBeNull();
   });
 
   it('1, 2 e 3 disparam as habilidades certas', () => {

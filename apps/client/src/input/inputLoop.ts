@@ -33,6 +33,7 @@ export function startInputLoop(
         thrust: snap.thrust,
         fire: snap.fire,
         fireCharge: snap.fireCharge,
+        useConsumable: snap.useConsumable,
         skill: snap.skill,
       },
     });

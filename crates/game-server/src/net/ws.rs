@@ -166,7 +166,7 @@ async fn handle_conn(
                             break Err(e);
                         }
                     }
-                    ClientMsg::Join { name, protocol, loadout, skills } => {
+                    ClientMsg::Join { name, protocol, loadout, skills, consumables } => {
                         if protocol != PROTOCOL_VERSION {
                             // Cliente desatualizado: avisa e encerra, em vez
                             // de deixá-lo interpretar bytes com outro layout.
@@ -183,13 +183,37 @@ async fn handle_conn(
                             %name,
                             modulos = loadout.len(),
                             skills = skills.len(),
+                            cargas = consumables.len(),
                             "player joined"
                         );
-                        state.enqueue(PlayerCommand::Join { player_id, name, loadout, skills });
+                        state.enqueue(PlayerCommand::Join {
+                            player_id,
+                            name,
+                            loadout,
+                            skills,
+                            consumables,
+                        });
                     }
-                    ClientMsg::Input { steer, pitch, roll, thrust, fire, fire_charge, skill } => {
+                    ClientMsg::Input {
+                        steer,
+                        pitch,
+                        roll,
+                        thrust,
+                        fire,
+                        fire_charge,
+                        skill,
+                        use_consumable,
+                    } => {
                         state.enqueue(PlayerCommand::Input {
-                            player_id, steer, pitch, roll, thrust, fire, fire_charge, skill,
+                            player_id,
+                            steer,
+                            pitch,
+                            roll,
+                            thrust,
+                            fire,
+                            fire_charge,
+                            skill,
+                            use_consumable,
                         });
                     }
                 }

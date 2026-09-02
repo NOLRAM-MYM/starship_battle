@@ -573,3 +573,29 @@
   0%, 100% { filter: brightness(1); }
   50% { filter: brightness(1.6); }
 }
+
+/* ---------- Slots de consumível ---------- */
+/* Compartilham a caixa das habilidades porque estão na mesma fileira e
+   competem pela mesma decisão. O que os separa é o contador de cargas:
+   habilidade recarrega sozinha, consumível acaba. */
+.hud-consumable {
+  border-color: rgba(255, 209, 102, 0.35);
+}
+.hud-consumable-count {
+  position: absolute;
+  right: 5px;
+  bottom: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--warn, #ffd166);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+/* Sem carga: apagado, mas ainda no lugar — remover o slot faria a
+   fileira inteira dançar no meio de um combate. */
+.hud-consumable.empty {
+  opacity: 0.35;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+.hud-consumable.empty .hud-consumable-count {
+  color: rgba(255, 255, 255, 0.5);
+}

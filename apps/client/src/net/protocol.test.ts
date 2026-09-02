@@ -20,7 +20,7 @@ describe('protocol roundtrip', () => {
   it('encode Join then decode bytes matches expected layout', () => {
     const msg: ClientMsg = {
       type: 'Join',
-      payload: { name: 'alice', protocol: PROTOCOL_VERSION, loadout: [], skills: [] },
+      payload: { name: 'alice', protocol: PROTOCOL_VERSION, loadout: [], skills: [], consumables: [] },
     };
     const bytes = encodeClientMsg(msg);
     // Esperado:
@@ -30,7 +30,8 @@ describe('protocol roundtrip', () => {
     //   u16 protocol=1      -> 2 bytes LE
     // v5: + u64 com o comprimento do Vec<String> do loadout (vazio aqui).
     // v8: + u64 com o comprimento do Vec<String> das skills.
-    expect(bytes.byteLength).toBe(4 + 8 + 5 + 2 + 8 + 8);
+    // v9: + u64 com o comprimento do Vec<ConsumableSlot>.
+    expect(bytes.byteLength).toBe(4 + 8 + 5 + 2 + 8 + 8 + 8);
 
     // Confere os primeiros bytes (variant + len)
     const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -53,13 +54,14 @@ describe('protocol roundtrip', () => {
       type: 'Input',
       payload: {
         steer: 0.25, pitch: -0.5, roll: 0.75, thrust: 1.0,
-        fire: true, fireCharge: 1.5, skill: null,
+        fire: true, fireCharge: 1.5, skill: null, useConsumable: null,
       },
     };
     const bytes = encodeClientMsg(msg);
     // v6: u32 variante + f32 steer/pitch/roll/thrust + u8 fire
-    //     + f32 fireCharge + tag Option.
-    expect(bytes.byteLength).toBe(4 + 4 * 4 + 1 + 4 + 1);
+    //     + f32 fireCharge + tag Option da skill.
+    // v9: + tag Option do slot de consumível.
+    expect(bytes.byteLength).toBe(4 + 4 * 4 + 1 + 4 + 1 + 1);
 
     // Confere a ORDEM dos eixos: se ela divergir do enum em Rust, o
     // servidor lê pitch como roll e a nave voa errado sem erro nenhum.
