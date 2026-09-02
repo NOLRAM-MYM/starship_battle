@@ -1,0 +1,575 @@
+/**
+ * HUD de combate. Cockpit ao redor das bordas, centro sempre livre.
+ * Tudo `pointer-events: none` — o HUD nunca rouba clique do canvas.
+ */
+
+#batle-hud,
+#batle-hud * {
+  pointer-events: none;
+  font-family: var(--font-ui);
+}
+
+#batle-hud {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  color: var(--text);
+  font-size: 12px;
+  user-select: none;
+}
+
+/* ---------- Painel de vitais (canto superior esquerdo) ---------- */
+.hud-vitals {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  width: 260px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, rgba(9, 14, 26, 0.82), rgba(9, 14, 26, 0.42));
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--r-md);
+  backdrop-filter: blur(10px);
+}
+
+.hud-callsign {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.hud-name { font-weight: 700; font-size: 14px; letter-spacing: 0.05em; }
+.hud-level {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.hud-bar { margin-bottom: 8px; }
+.hud-bar:last-child { margin-bottom: 0; }
+
+.hud-bar-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 3px;
+}
+.hud-bar-head b { font-family: var(--font-mono); color: var(--text-dim); font-weight: 500; }
+
+.hud-track {
+  position: relative;
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+.hud-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  border-radius: 4px;
+  transition: width 160ms var(--ease), background 200ms linear;
+}
+/* Rastro branco que mostra o dano recém-tomado antes de assentar. */
+.hud-ghost {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: rgba(255, 255, 255, 0.28);
+  transition: width 620ms ease-out;
+}
+
+.hud-fill-hp { background: linear-gradient(90deg, #2fd07a, #45e5a4); }
+.hud-fill-shield { background: linear-gradient(90deg, #2f8fd0, #6fd6ff); }
+.hud-fill-xp { background: linear-gradient(90deg, #c99a2f, #ffd166); }
+
+/* ---------- Alvo travado (topo centro) ---------- */
+.hud-target {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 190px;
+  padding: 8px 14px;
+  text-align: center;
+  background: rgba(9, 14, 26, 0.72);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--danger);
+  border-radius: var(--r-md);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  transition: opacity var(--med) var(--ease);
+}
+.hud-target.active { opacity: 1; }
+.hud-target-name { font-weight: 700; letter-spacing: 0.08em; font-size: 13px; }
+.hud-target-meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+.hud-target-track {
+  height: 3px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+.hud-target-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--danger);
+  transition: width 160ms var(--ease);
+}
+
+/* ---------- Radar (canto inferior direito) ---------- */
+.hud-radar {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  width: 168px;
+  height: 168px;
+}
+.hud-radar canvas { width: 100%; height: 100%; display: block; }
+.hud-radar-label {
+  position: absolute;
+  top: -14px;
+  right: 2px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+
+/* ---------- Créditos (canto inferior esquerdo) ---------- */
+.hud-credits {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 7px 12px;
+  background: rgba(9, 14, 26, 0.72);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  backdrop-filter: blur(10px);
+}
+.hud-credits .sym { color: var(--warn); font-weight: 700; }
+
+/* ---------- Barra de habilidades (base centro) ---------- */
+.hud-actions {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+}
+
+.hud-skill {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  border-radius: var(--r-md);
+  background: rgba(9, 14, 26, 0.8);
+  border: 1px solid var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+  transition: box-shadow var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+.hud-skill.ready { box-shadow: 0 0 16px var(--accent-dim); }
+/* Pulso único no instante em que a habilidade fica pronta. */
+.hud-skill.just-ready { animation: skill-pop 420ms var(--ease); }
+@keyframes skill-pop {
+  0% { transform: scale(1); box-shadow: 0 0 0 var(--accent-glow); }
+  40% { transform: scale(1.12); box-shadow: 0 0 26px var(--accent-glow); }
+  100% { transform: scale(1); box-shadow: 0 0 16px var(--accent-dim); }
+}
+
+.hud-skill-key {
+  position: absolute;
+  top: 3px;
+  left: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  z-index: 3;
+}
+.hud-skill-name {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  z-index: 3;
+}
+.hud-skill-timer {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  z-index: 3;
+  min-height: 12px;
+}
+.hud-skill-cd {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 0%;
+  background: rgba(120, 160, 220, 0.28);
+  z-index: 1;
+  transition: height 100ms linear;
+}
+
+/* ---------- Retículo central ---------- */
+.hud-reticle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  opacity: 0.55;
+}
+.hud-reticle::before,
+.hud-reticle::after {
+  content: '';
+  position: absolute;
+  background: var(--accent);
+}
+.hud-reticle::before { left: 50%; top: 0; width: 1px; height: 8px; }
+.hud-reticle::after { left: 50%; bottom: 0; width: 1px; height: 8px; }
+
+/* ---------- Vinheta de dano ---------- */
+.hud-vignette {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(255, 40, 60, 0.55) 100%);
+  transition: opacity 380ms ease-out;
+}
+.hud-vignette.hit { opacity: 1; transition: opacity 60ms linear; }
+
+/* ---------- Alertas transitórios (centro-alto) ---------- */
+.hud-toasts {
+  position: absolute;
+  top: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.hud-toast {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  background: rgba(9, 14, 26, 0.85);
+  border: 1px solid var(--border-strong);
+  animation: toast-in 260ms var(--ease), toast-out 400ms var(--ease) 1.6s forwards;
+}
+.hud-toast.good { color: var(--success); border-color: rgba(69, 229, 164, 0.5); }
+.hud-toast.bad { color: var(--danger); border-color: rgba(255, 95, 109, 0.5); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(-6px); } }
+
+/* ---------- Mobile: encolhe e reposiciona ---------- */
+@media (max-width: 820px) {
+  .hud-vitals { width: 190px; top: 10px; left: 10px; padding: 9px 10px; }
+  .hud-radar { width: 112px; height: 112px; right: 10px; bottom: 96px; }
+  .hud-skill { width: 46px; height: 46px; }
+  .hud-credits { left: 10px; bottom: 10px; font-size: 11px; }
+}
+
+/* ---------- Navegação: fita de bússola + marcadores de borda ---------- */
+/* O radar mostra o que está perto; isto mostra PARA ONDE se está indo e
+   onde ficam os marcos do setor, que é o que faltava para se orientar. */
+
+.hud-nav { position: absolute; inset: 0; }
+
+.nav-ribbon {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(620px, 62vw);
+  height: 34px;
+  background: linear-gradient(90deg,
+    transparent 0%, rgba(9, 14, 26, 0.78) 12%,
+    rgba(9, 14, 26, 0.78) 88%, transparent 100%);
+  border-top: 1px solid rgba(120, 190, 255, 0.22);
+  border-bottom: 1px solid rgba(120, 190, 255, 0.22);
+  overflow: hidden;
+}
+
+/* Marca central: para onde o nariz aponta. */
+.nav-ribbon::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.nav-ticks, .nav-marks { position: absolute; inset: 0; }
+
+.nav-tick {
+  position: absolute;
+  top: 3px;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+}
+
+.nav-mark {
+  position: absolute;
+  bottom: 2px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  color: var(--mk, var(--accent));
+}
+.nav-mark i { font-style: normal; font-size: 10px; }
+.nav-mark b { font-size: 10px; font-weight: 600; color: var(--text-dim); }
+.nav-mark u {
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-faint);
+}
+.nav-mark.selected b { color: var(--text); }
+.nav-mark.selected i { filter: drop-shadow(0 0 6px currentColor); }
+
+.nav-heading {
+  position: absolute;
+  left: 50%;
+  bottom: -19px;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: rgba(9, 14, 26, 0.9);
+  padding: 1px 8px;
+  border-radius: 0 0 4px 4px;
+  border: 1px solid rgba(120, 190, 255, 0.22);
+  border-top: none;
+}
+
+/* Marcadores que apontam para marcos fora da tela. */
+.nav-edges { position: absolute; inset: 0; }
+
+.nav-edge {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: -10px 0 0 -10px;
+  color: var(--mk, var(--accent));
+  opacity: 0.85;
+  transition: opacity var(--fast) var(--ease);
+}
+.nav-edge i { font-style: normal; font-size: 13px; display: block; }
+.nav-edge span {
+  font-size: 10px;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.nav-edge span b {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--text-faint);
+}
+/* Já visível na tela: some com a seta, deixa só o rótulo discreto. */
+.nav-edge.on-screen { opacity: 0.45; }
+.nav-edge.on-screen i { display: none; }
+.nav-edge.selected { opacity: 1; }
+.nav-edge.selected i { filter: drop-shadow(0 0 6px currentColor); }
+
+/* ---------- Botão de retorno ao hangar ---------- */
+.hud-exit {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  pointer-events: auto !important;
+  padding: 8px 14px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: rgba(9, 14, 26, 0.8);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  transition: all var(--fast) var(--ease);
+}
+.hud-exit:hover { color: var(--text); border-color: var(--danger); background: rgba(255, 95, 109, 0.14); }
+.hud-exit small { display: block; font-size: 9px; color: var(--text-faint); letter-spacing: 0.06em; }
+
+@media (max-width: 820px) {
+  .nav-ribbon { width: 82vw; height: 28px; top: 6px; }
+  .nav-mark b { display: none; }
+  .nav-edge span { display: none; }
+}
+
+
+/* ---------- Aviso de poço gravitacional ---------- */
+/* Fica no centro-baixo, fora do caminho do retículo mas impossível de
+   ignorar: o jogador precisa entender por que a nave está sendo puxada. */
+.hud-gravity {
+  position: absolute;
+  bottom: 92px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 7px 16px;
+  border-radius: var(--r-md);
+  background: rgba(26, 14, 9, 0.82);
+  border: 1px solid rgba(255, 195, 78, 0.45);
+  backdrop-filter: blur(10px);
+  text-align: center;
+}
+.hud-gravity.active { display: flex; animation: grav-in 220ms var(--ease); }
+@keyframes grav-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; } }
+
+.hud-gravity b {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--warn);
+}
+.hud-gravity span { font-size: 13px; font-weight: 600; }
+.hud-gravity u {
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* Perto da superfície: vermelho e pulsando. */
+.hud-gravity.critical {
+  background: rgba(38, 10, 14, 0.88);
+  border-color: rgba(255, 95, 109, 0.6);
+  animation: grav-alert 700ms ease-in-out infinite;
+}
+.hud-gravity.critical b { color: var(--danger); }
+@keyframes grav-alert {
+  0%, 100% { box-shadow: 0 0 0 rgba(255, 95, 109, 0); }
+  50% { box-shadow: 0 0 22px rgba(255, 95, 109, 0.45); }
+}
+
+
+/* ---------- Botão de alternância (linhas de gravidade) ---------- */
+/* Fica logo abaixo do botão de hangar, no mesmo canto. O ALERTA de
+   gravidade não é afetado por ele — a informação crítica continua. */
+.hud-toggle {
+  position: absolute;
+  top: 58px;
+  right: 14px;
+  pointer-events: auto !important;
+  padding: 7px 12px;
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(9, 14, 26, 0.8);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  transition: all var(--fast) var(--ease);
+}
+.hud-toggle:hover { background: var(--accent-dim); }
+.hud-toggle small {
+  display: block;
+  font-size: 9px;
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+}
+/* Desligado: some da vista, sem sumir da tela. */
+.hud-toggle.off { color: var(--text-faint); border-color: var(--border); opacity: 0.7; }
+
+
+/* ---------- Barra de carga do tiro ---------- */
+/* Logo abaixo do retículo: é onde o olho já está durante o combate. */
+.hud-charge {
+  position: absolute;
+  top: calc(50% + 26px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  opacity: 0;
+  transition: opacity 120ms var(--ease);
+}
+.hud-charge.active { opacity: 1; }
+
+.hud-charge-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent), #6fd6ff);
+  transition: width 60ms linear;
+}
+
+/* Rótulo abaixo da barra: arma e ganho atual da carga.
+   Fica no centro da tela, então é discreto — o número só importa quando
+   o gatilho está preso, e a barra some junto com ele. */
+.hud-charge-label {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+}
+.hud-charge.full .hud-charge-label {
+  color: var(--warn);
+}
+
+/* Carga cheia: pulsa para avisar sem exigir que o jogador olhe. */
+.hud-charge.full { box-shadow: 0 0 14px var(--accent-glow); }
+.hud-charge.full .hud-charge-fill {
+  background: linear-gradient(90deg, var(--warn), #ffe08a);
+  animation: charge-full 500ms ease-in-out infinite;
+}
+@keyframes charge-full {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.6); }
+}

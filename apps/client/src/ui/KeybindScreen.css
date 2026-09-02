@@ -1,0 +1,143 @@
+/** Painel de controles. Mesma linguagem da loja e do estaleiro. */
+
+@import './../styles/theme.css';
+
+.keybind-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  font-family: var(--font-ui);
+  color: var(--text);
+}
+
+.kb-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 5, 11, 0.74);
+  backdrop-filter: blur(6px);
+}
+
+.kb-frame {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(620px, 92vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(22px) saturate(1.3);
+  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  animation: kb-in 240ms var(--ease);
+}
+@keyframes kb-in {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 12px)); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
+
+.kb-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.kb-title { margin: 2px 0 0; font-size: 19px; letter-spacing: 0.06em; font-weight: 700; }
+.kb-close { padding: 8px 14px; font-size: 11px; }
+
+.kb-help {
+  margin: 0;
+  padding: 12px 20px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+.kb-help b { color: var(--text); }
+
+.kb-notice {
+  margin: 12px 20px 0;
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.kb-notice.good {
+  color: var(--success);
+  background: rgba(69, 229, 164, 0.1);
+  border: 1px solid rgba(69, 229, 164, 0.3);
+}
+.kb-notice.bad {
+  color: var(--warn);
+  background: rgba(255, 195, 78, 0.1);
+  border: 1px solid rgba(255, 195, 78, 0.3);
+}
+
+.kb-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 14px 20px 18px;
+}
+
+.kb-group { margin-bottom: 16px; }
+.kb-group .eyebrow { margin-bottom: 8px; }
+
+.kb-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(120, 160, 220, 0.07);
+}
+.kb-row.capturing { background: rgba(78, 201, 255, 0.07); }
+.kb-row.unbound .kb-key { border-color: var(--danger); color: var(--danger); }
+
+.kb-label { font-size: 13px; display: flex; flex-direction: column; gap: 2px; }
+.kb-hint { font-size: 10.5px; color: var(--text-faint); }
+
+.kb-key {
+  min-width: 118px;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-strong);
+  /* Sombra inferior imita a lateral de uma tecla física. */
+  border-radius: var(--r-sm);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: all var(--fast) var(--ease);
+}
+.kb-key:hover { background: var(--accent-dim); border-color: var(--accent); }
+.kb-row.capturing .kb-key {
+  background: var(--accent);
+  color: #04121c;
+  border-color: var(--accent);
+  animation: kb-pulse 1s ease-in-out infinite;
+}
+@keyframes kb-pulse {
+  0%, 100% { box-shadow: 0 2px 0 rgba(0, 0, 0, 0.4), 0 0 0 rgba(78, 201, 255, 0.5); }
+  50% { box-shadow: 0 2px 0 rgba(0, 0, 0, 0.4), 0 0 18px rgba(78, 201, 255, 0.55); }
+}
+
+.kb-foot {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 620px) {
+  .kb-frame { width: 100vw; height: 100vh; max-height: none; border-radius: 0; border: none; }
+  .kb-key { min-width: 92px; }
+}

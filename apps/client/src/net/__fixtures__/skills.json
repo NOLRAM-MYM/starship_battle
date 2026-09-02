@@ -1,0 +1,7 @@
+{
+  "combat_t1": { "damageMult": 1.05, "fireRateMult": 1, "shieldPierce": 0, "chargeTimeMult": 1 },
+  "combat_t2": { "damageMult": 1, "fireRateMult": 1.1, "shieldPierce": 0, "chargeTimeMult": 1 },
+  "combat_t3": { "damageMult": 1.15, "fireRateMult": 1, "shieldPierce": 0, "chargeTimeMult": 1 },
+  "combat_t4": { "damageMult": 1, "fireRateMult": 1, "shieldPierce": 0.1, "chargeTimeMult": 1 },
+  "combat_t5": { "damageMult": 1.12, "fireRateMult": 1, "shieldPierce": 0, "chargeTimeMult": 1 }
+}

@@ -2,19 +2,25 @@
   "name": "space-battle-arena",
   "version": "0.1.0",
   "private": true,
+  "description": "Space battle monorepo. Run: pnpm install, pnpm dev, pnpm test, pnpm ci (full CI: build + test + bundle check).",
   "packageManager": "pnpm@9.12.0",
   "scripts": {
     "dev": "pnpm -r --parallel run dev",
     "build": "pnpm -r run build",
     "test": "pnpm -r run test",
     "lint": "pnpm -r run lint",
-    "format": "prettier --write \"**/*.{ts,tsx,md}\""
+    "lint:helm": "node scripts/lint-helm.mjs",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "ci": "node scripts/run-ci.mjs",
+    "ci:bash": "bash scripts/ci.sh",
+    "ci:ps1": "powershell -ExecutionPolicy Bypass -File scripts/ci.ps1"
   },
   "devDependencies": {
     "typescript": "5.6.3",
     "prettier": "3.3.3",
     "eslint": "9.13.0",
-    "@types/node": "22.7.5"
+    "@types/node": "22.7.5",
+    "js-yaml": "4.1.0"
   },
   "engines": {
     "node": ">=22.0.0",

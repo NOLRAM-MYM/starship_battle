@@ -1,139 +1,306 @@
-:root {
-  --bg-panel: rgba(8, 12, 22, 0.92);
-  --border: #1d2a44;
-  --accent: #4ec9ff;
-  --text: #d6e1f5;
-  --text-dim: #6b7c9c;
-  --danger: #ff5a5a;
+/**
+ * Estaleiro em tela cheia.
+ *
+ * Três painéis: catálogo (rolável), hardpoints (grade) e leitura de
+ * atributos (fixa à direita). Em telas estreitas viram uma coluna só,
+ * com os hardpoints no topo — que é onde a ação acontece no toque.
+ */
+
+@import './../styles/theme.css';
+
+.shipyard {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  font-family: var(--font-ui);
+  color: var(--text);
 }
 
-#ship-builder {
-  position: fixed;
-  right: 16px;
-  top: 16px;
-  bottom: 16px;
-  width: 360px;
+.yard-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 5, 11, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.yard-frame {
+  position: absolute;
+  inset: 3vh 3vw;
+  display: flex;
+  flex-direction: column;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(22px) saturate(1.3);
+  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  animation: yard-in 280ms var(--ease);
+}
+@keyframes yard-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------------- Topo ---------------- */
+.yard-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(to bottom, rgba(78, 201, 255, 0.06), transparent);
+}
+.yard-title { margin: 2px 0 0; font-size: 20px; letter-spacing: 0.06em; font-weight: 700; }
+.yard-close { padding: 8px 14px; font-size: 11px; }
+
+/* ---------------- Corpo ---------------- */
+.yard-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(280px, 1.1fr) minmax(300px, 1.2fr) 300px;
+  gap: 1px;
+  background: var(--border);
+  min-height: 0;
+}
+
+.yard-pane {
+  background: var(--bg-panel-solid);
   padding: 16px;
-  color: var(--text);
-  font-family: 'Segoe UI', system-ui, sans-serif;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  z-index: 10;
+  min-height: 0;
   overflow-y: auto;
-  backdrop-filter: blur(8px);
+  scrollbar-width: thin;
 }
 
-#ship-builder h2 {
-  margin: 0;
-  font-size: 16px;
-  color: var(--accent);
-  letter-spacing: 1px;
-}
-
-.section-title {
-  font-size: 11px;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  margin-top: 4px;
-  letter-spacing: 0.5px;
-}
-
-.component-item {
+.yard-pane-head {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 6px 8px;
-  background: rgba(78, 201, 255, 0.06);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  margin-bottom: 4px;
-  cursor: grab;
-  user-select: none;
-  font-size: 13px;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.component-item:active { cursor: grabbing; }
-.component-item[data-tier="3"], .component-item[data-tier="4"] { border-color: #7a4eff; }
-.component-item[data-tier="5"] { border-color: #ffb84e; }
-
-.component-tier {
+/* ---------------- Chips / filtros ---------------- */
+.chip {
+  font-family: var(--font-ui);
   font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-sunken);
   color: var(--text-dim);
-  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--fast) var(--ease);
+}
+.chip:hover { color: var(--text); border-color: var(--border-strong); }
+.chip.active { background: var(--accent); border-color: var(--accent); color: #04121c; }
+
+.yard-filters { display: flex; flex-wrap: wrap; gap: 5px; }
+
+/* ---------------- Catálogo ---------------- */
+.yard-catalog-list { display: flex; flex-direction: column; gap: 8px; }
+
+.comp-card {
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--tier-1);
+  cursor: pointer;
+  transition: background var(--fast) var(--ease), transform var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease);
+}
+.comp-card:hover { background: rgba(78, 201, 255, 0.08); transform: translateX(3px); }
+.comp-card.dragging { opacity: 0.45; }
+.comp-card.equipped { box-shadow: inset 0 0 0 1px rgba(69, 229, 164, 0.35); }
+
+/* Cor da borda esquerda = raridade do tier. */
+.comp-card[data-tier='1'] { border-left-color: var(--tier-1); }
+.comp-card[data-tier='2'] { border-left-color: var(--tier-2); }
+.comp-card[data-tier='3'] { border-left-color: var(--tier-3); }
+.comp-card[data-tier='4'] { border-left-color: var(--tier-4); }
+.comp-card[data-tier='5'] {
+  border-left-color: var(--tier-5);
+  box-shadow: inset 0 0 30px rgba(255, 179, 71, 0.06);
 }
 
-.slot-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 8px;
-  background: rgba(255, 255, 255, 0.03);
+.comp-top { display: flex; align-items: center; gap: 8px; }
+.comp-glyph { color: var(--accent); font-size: 12px; }
+.comp-name { flex: 1; font-weight: 600; font-size: 13px; }
+.comp-tier { font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); }
+
+.comp-blurb {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.45;
+  margin: 4px 0 6px;
+}
+
+.comp-stats { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.chip-stat {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--bg-sunken);
+  color: var(--accent);
+}
+.comp-mass { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); }
+
+.yard-empty { color: var(--text-faint); font-size: 12px; text-align: center; padding: 20px; }
+
+/* Peça ainda não comprada: visível no catálogo (para o jogador saber que
+   existe e quanto custa), mas não instalável. */
+.comp-card.locked {
+  opacity: 0.55;
+  border-left-color: var(--text-faint) !important;
+  cursor: not-allowed;
+}
+.comp-card.locked:hover { background: rgba(255, 95, 109, 0.06); transform: none; }
+.comp-lock {
+  margin-top: 6px;
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  color: var(--warn);
+}
+
+/* ---------------- Hardpoints ---------------- */
+.slot-grid { display: flex; flex-direction: column; gap: 14px; }
+
+.slot-group-label {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+.slot-group-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 8px;
+}
+
+.slot-cell {
+  position: relative;
+  padding: 12px 10px;
+  min-height: 68px;
+  border-radius: var(--r-sm);
   border: 1px dashed var(--border);
-  border-radius: 4px;
-  margin-bottom: 4px;
-  min-height: 32px;
-  font-size: 12px;
-  transition: background 0.15s, border-color 0.15s;
+  background: var(--bg-sunken);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  transition: all var(--fast) var(--ease);
 }
-
-.slot-row.drag-over {
-  background: rgba(78, 201, 255, 0.12);
+.slot-cell:hover { border-color: var(--border-strong); }
+.slot-cell.drag-over {
+  border-style: solid;
   border-color: var(--accent);
+  background: var(--accent-dim);
+  box-shadow: 0 0 22px var(--accent-dim);
+}
+.slot-cell.filled {
   border-style: solid;
+  background: rgba(69, 229, 164, 0.06);
+  border-color: rgba(69, 229, 164, 0.32);
 }
+.slot-cell.filled[data-tier='4'] { border-color: var(--tier-4); background: rgba(176, 107, 255, 0.08); }
+.slot-cell.filled[data-tier='5'] { border-color: var(--tier-5); background: rgba(255, 179, 71, 0.08); }
 
-.slot-row[data-filled="true"] {
-  background: rgba(78, 255, 159, 0.08);
-  border-style: solid;
-  border-color: #4eff9f;
-}
-
-.slot-row.reject {
-  animation: shake 0.18s ease-in-out;
-}
-
+.slot-cell.reject { animation: shake 0.26s ease-in-out; border-color: var(--danger); }
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-4px); }
-  75% { transform: translateX(4px); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
 }
 
-.slot-kind { color: var(--text-dim); }
-.slot-component { color: var(--accent); font-weight: 500; }
-.slot-empty { color: var(--text-dim); font-style: italic; }
+.slot-index {
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-faint);
+}
+.slot-comp { font-size: 12px; font-weight: 600; line-height: 1.25; }
+.slot-tier { font-size: 9.5px; color: var(--text-faint); letter-spacing: 0.06em; text-transform: uppercase; }
+.slot-free { font-size: 11px; color: var(--text-faint); font-style: italic; }
 
-.stats-block {
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 8px;
-  font-size: 12px;
+.yard-hint {
+  margin: 0;
+  font-size: 11px;
   line-height: 1.6;
+  color: var(--text-faint);
+  border-left: 2px solid var(--border);
+  padding-left: 9px;
 }
 
-.stat-row {
+/* ---------------- Leitura de atributos ---------------- */
+.yard-readout { gap: 10px; }
+.yard-chart { height: 180px; }
+
+.yard-rows { display: flex; flex-direction: column; gap: 3px; }
+.yard-row {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(120, 160, 220, 0.07);
+}
+.yard-row b { font-family: var(--font-mono); font-weight: 600; color: var(--text); }
+.yard-row u { text-decoration: none; color: var(--text-faint); font-size: 10px; margin-left: 2px; }
+
+/* Delta hipotético mostrado ao passar o mouse numa peça do catálogo. */
+.delta {
+  font-style: normal;
+  margin-left: 7px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+.delta.good { color: var(--success); background: rgba(69, 229, 164, 0.12); }
+.delta.bad { color: var(--danger); background: rgba(255, 95, 109, 0.12); }
+
+.yard-cost {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 9px 11px;
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.yard-cost b { font-family: var(--font-mono); color: var(--warn); font-size: 14px; }
+
+.yard-save { width: 100%; margin-top: auto; }
+
+.yard-msg { min-height: 16px; font-size: 11.5px; line-height: 1.4; text-align: center; }
+.yard-msg.good { color: var(--success); }
+.yard-msg.bad { color: var(--danger); }
+
+/* ---------------- Responsivo ---------------- */
+@media (max-width: 1080px) {
+  .yard-body { grid-template-columns: 1fr 1fr; }
+  /* Atributos passam a ocupar a linha inteira abaixo. */
+  .yard-readout { grid-column: 1 / -1; }
+  .yard-chart { height: 200px; max-width: 260px; margin: 0 auto; }
 }
 
-.stat-value { color: var(--accent); font-weight: 500; }
-
-button.save-btn {
-  padding: 8px;
-  background: #1d2a44;
-  color: var(--accent);
-  border: 1px solid var(--accent);
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  transition: background 0.15s;
+@media (max-width: 720px) {
+  .yard-frame { inset: 0; border-radius: 0; border: none; }
+  .yard-body { grid-template-columns: 1fr; }
+  /* No toque, os hardpoints vêm primeiro. */
+  .yard-slots { order: -1; }
+  .yard-readout { grid-column: auto; }
+  .slot-group-items { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
 }
-
-button.save-btn:hover { background: #2a3d5f; }
-button.save-btn:disabled { opacity: 0.4; cursor: not-allowed; }

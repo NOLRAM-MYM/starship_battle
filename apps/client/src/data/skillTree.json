@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "branches": [
+    {
+      "id": "combat",
+      "name": "Combat",
+      "nodes": [
+        {
+          "id": "combat_t1",
+          "name": "Sharpened Aim",
+          "description": "+5% weapon damage",
+          "requires": []
+        },
+        {
+          "id": "combat_t2",
+          "name": "Rapid Fire",
+          "description": "+10% fire rate",
+          "requires": ["combat_t1"]
+        },
+        {
+          "id": "combat_t3",
+          "name": "Critical Strike",
+          "description": "+15% crit chance",
+          "requires": ["combat_t2"]
+        },
+        {
+          "id": "combat_t4",
+          "name": "Armor Piercing",
+          "description": "10% dmg bypasses shield",
+          "requires": ["combat_t3"]
+        },
+        {
+          "id": "combat_t5",
+          "name": "Annihilator",
+          "description": "+25% damage vs structures",
+          "requires": ["combat_t4"]
+        }
+      ]
+    },
+    {
+      "id": "industry",
+      "name": "Industry",
+      "nodes": [
+        {
+          "id": "industry_t1",
+          "name": "Efficient Mining",
+          "description": "+10% resource yield",
+          "requires": []
+        },
+        {
+          "id": "industry_t2",
+          "name": "Refining",
+          "description": "+15% refining output",
+          "requires": ["industry_t1"]
+        },
+        {
+          "id": "industry_t3",
+          "name": "Logistics",
+          "description": "+20% cargo capacity",
+          "requires": ["industry_t2"]
+        },
+        {
+          "id": "industry_t4",
+          "name": "Manufacturing",
+          "description": "-15% build time",
+          "requires": ["industry_t3"]
+        },
+        {
+          "id": "industry_t5",
+          "name": "Automation",
+          "description": "Passive credits / minute",
+          "requires": ["industry_t4"]
+        }
+      ]
+    },
+    {
+      "id": "exploration",
+      "name": "Exploration",
+      "nodes": [
+        {
+          "id": "exploration_t1",
+          "name": "Pathfinder",
+          "description": "+10% warp speed",
+          "requires": []
+        },
+        {
+          "id": "exploration_t2",
+          "name": "Scanner",
+          "description": "+25% sensor range",
+          "requires": ["exploration_t1"]
+        },
+        {
+          "id": "exploration_t3",
+          "name": "Salvager",
+          "description": "+20% loot from wrecks",
+          "requires": ["exploration_t2"]
+        },
+        {
+          "id": "exploration_t4",
+          "name": "Survey Specialist",
+          "description": "Reveal anomalies on map",
+          "requires": ["exploration_t3"]
+        },
+        {
+          "id": "exploration_t5",
+          "name": "Void Walker",
+          "description": "Reduced jump cooldown",
+          "requires": ["exploration_t4"]
+        }
+      ]
+    }
+  ]
+}

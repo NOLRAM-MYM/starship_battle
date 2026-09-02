@@ -1,0 +1,99 @@
+/**
+ * Tela de acesso.
+ *
+ * Como o hangar, é transparente ao centro: a doca 3D roda atrás e a
+ * caixa de login flutua sobre ela em vidro.
+ */
+
+@import './../styles/theme.css';
+
+#login-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  font-family: var(--font-ui);
+  color: var(--text);
+  background: radial-gradient(
+    ellipse at 50% 40%,
+    rgba(4, 6, 13, 0.35) 0%,
+    rgba(4, 6, 13, 0.86) 70%,
+    rgba(4, 6, 13, 0.96) 100%
+  );
+}
+
+.login-box {
+  width: 340px;
+  max-width: 88vw;
+  padding: 32px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(20px) saturate(1.3);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  animation: login-in 340ms var(--ease);
+}
+@keyframes login-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+
+.login-box h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-align: center;
+}
+.login-box h1 b { color: var(--accent); font-weight: 700; }
+
+.login-tagline {
+  margin: -6px 0 10px;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.login-box input {
+  padding: 12px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+.login-box input::placeholder { color: var(--text-faint); }
+.login-box input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.login-actions { display: flex; gap: 10px; margin-top: 4px; }
+.login-actions .btn { flex: 1; }
+
+#login-error {
+  min-height: 18px;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+  color: var(--danger);
+}
+#login-error.ok { color: var(--success); }
+
+.login-hint {
+  margin: 4px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text-faint);
+}

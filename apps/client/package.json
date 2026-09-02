@@ -7,7 +7,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check:bundle": "vite build && node ../../scripts/check-bundle-size.mjs"
   },
   "dependencies": {
     "three": "0.170.0",
