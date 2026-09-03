@@ -70,6 +70,8 @@ export interface TorpedoLook {
   radius: number;
   hpRatio: number;
   locked: boolean;
+  /** Entidade perseguida, para distinguir os SEUS torpedos dos alheios. */
+  target: number | null;
 }
 
 /** Arma e carga de um disparo, para o renderizador. */

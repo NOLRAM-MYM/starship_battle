@@ -1,0 +1,4 @@
+{
+  "torpedo_seeker": { "damage": 140, "lockRange": 900, "speed": 105, "hp": 40 },
+  "torpedo_heavy": { "damage": 380, "lockRange": 1200, "speed": 85, "hp": 120 }
+}

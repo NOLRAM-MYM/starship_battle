@@ -9,7 +9,7 @@
  *   - bool: u8 (0/1)
  */
 
-export const PROTOCOL_VERSION = 12 as const;
+export const PROTOCOL_VERSION = 13 as const;
 /**
  * Precisa bater com `SNAPSHOT_RATE_HZ` do servidor — é o intervalo que a
  * interpolação usa como alvo. O servidor tica a 30Hz e envia snapshot a
@@ -246,6 +246,14 @@ export interface TorpedoPayload {
   hpRatio: number;
   /** `true` enquanto persegue alguém. */
   locked: boolean;
+  /**
+   * Entidade perseguida, quando há trava.
+   *
+   * Sem isto não dá para distinguir um torpedo vindo NA SUA direção de
+   * um que você mesmo lançou — e o alerta de perseguição soava o alarme
+   * contra o próprio jogador ao disparar.
+   */
+  target: number | null;
 }
 
 /**
@@ -550,6 +558,7 @@ function readPayload(r: BincodeReader): EntityPayload | null {
           radius: r.readF32(),
           hpRatio: r.readF32(),
           locked: r.readU8() !== 0,
+          target: r.readOptionU32(),
         },
       };
     default:

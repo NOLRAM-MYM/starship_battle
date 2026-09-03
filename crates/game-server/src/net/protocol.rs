@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// v6: `Input` ganhou `fire_charge` (tiro carregado) e o mundo ganhou
 /// vórtices de dobra como tipo de entidade.
-pub const PROTOCOL_VERSION: u16 = 12;
+pub const PROTOCOL_VERSION: u16 = 13;
 
 /// Identificadores de efeito visual em `ServerMsg::Vfx`.
 ///
@@ -329,6 +329,13 @@ pub struct TorpedoPayload {
     pub hp_ratio: f32,
     /// `true` enquanto persegue alguém.
     pub locked: bool,
+    /// Entidade perseguida, quando há trava.
+    ///
+    /// Sem isto o cliente não conseguia distinguir um torpedo vindo NA
+    /// SUA direção de um que você mesmo lançou: o alerta de perseguição
+    /// contava os dois, e disparar uma arma soava o alarme contra o
+    /// próprio jogador.
+    pub target: Option<u32>,
 }
 
 /// Payload de projétil.
@@ -592,14 +599,15 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_is_v12() {
+    fn protocol_version_is_v13() {
         // v2: payloads por tipo. v3: estáticos por AOI. v4: pitch/roll.
         // v5: loadout no Join + corpos celestes. v6: tiro carregado +
         // vórtices de dobra. v7: aparência do projétil (arma + carga).
         // v8: skills no Join. v9: consumíveis no Join e no Input.
         // v10: torpedos teleguiados e iscas de dispersão.
         // v11: campo de provas. v12: time nas naves (amigo/inimigo).
-        assert_eq!(PROTOCOL_VERSION, 12);
+        // v13: alvo do torpedo, para o alerta não contar os próprios.
+        assert_eq!(PROTOCOL_VERSION, 13);
     }
 
     #[test]
@@ -962,6 +970,36 @@ mod forward_fixture {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/client/src/net/__fixtures__");
         std::fs::create_dir_all(dir).unwrap();
         let mut f = std::fs::File::create(format!("{dir}/forward.json")).unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+    }
+}
+
+/// Fixture do catálogo de torpedos para o cliente.
+///
+/// O cliente precisa saber o alcance de travamento para DIZER ao jogador
+/// por que o lançamento não saiu. Sem isso o pedido é descartado em
+/// silêncio no servidor, e a única informação que o jogador recebe é que
+/// a tecla não fez nada — indistinguível de um bug.
+#[cfg(test)]
+mod torpedo_fixture {
+    use sim_core::ship::torpedo::torpedo_profile;
+    use std::io::Write;
+
+    #[test]
+    fn escreve_catalogo_de_torpedos_para_o_cliente() {
+        let ids = ["torpedo_seeker", "torpedo_heavy"];
+        let mut linhas = Vec::new();
+        for id in ids {
+            let t = torpedo_profile(id).expect("torpedo do catálogo");
+            linhas.push(format!(
+                "  \"{}\": {{ \"damage\": {}, \"lockRange\": {}, \"speed\": {}, \"hp\": {} }}",
+                id, t.damage, t.lock_range, t.speed, t.hp
+            ));
+        }
+        let json = format!("{{\n{}\n}}\n", linhas.join(",\n"));
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/client/src/net/__fixtures__");
+        std::fs::create_dir_all(dir).unwrap();
+        let mut f = std::fs::File::create(format!("{dir}/torpedoes.json")).unwrap();
         f.write_all(json.as_bytes()).unwrap();
     }
 }

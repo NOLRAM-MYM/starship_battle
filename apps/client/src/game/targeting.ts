@@ -39,7 +39,27 @@ export interface TargetingOptions {
   minAlignment?: number;
   /** Peso do alinhamento contra a distância (0..1). */
   alignmentWeight?: number;
+  /**
+   * Alcance efetivo da arma primária, em unidades.
+   *
+   * Contatos além disso continuam sendo alvos válidos — dá para querer
+   * acompanhar um inimigo que se afasta —, mas perdem prioridade. Sem
+   * isto o travamento automático escolhia rotineiramente alguém fora do
+   * alcance de tiro: o alvo aparecia no painel e a mira respondia "SEM
+   * SOLUÇÃO", porque o raio de travamento (1200) é mais que o dobro do
+   * alcance de um canhão linear (~494).
+   */
+  weaponRange?: number;
 }
+
+/**
+ * Penalidade de pontuação para alvos fora do alcance da arma.
+ *
+ * Penalidade, e não exclusão: um inimigo fugindo continua sendo o alvo
+ * que interessa, e removê-lo da lista faria o Tab pular justamente quem
+ * o jogador está perseguindo.
+ */
+const PENALIDADE_FORA_DE_ALCANCE = 0.45;
 
 function sub(a: Vec3, b: Vec3): Vec3 {
   return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
@@ -83,7 +103,13 @@ export function rankTargets(
     // Proximidade e alinhamento normalizados em 0..1, depois combinados.
     const proximity = 1 - distance / maxRange;
     const facing = (alignment + 1) / 2;
-    const score = proximity * (1 - w) + facing * w;
+    let score = proximity * (1 - w) + facing * w;
+    // Fora do alcance da arma, o alvo cai na ordem: continua travável,
+    // mas deixa de ser a escolha automática quando há alguém em quem os
+    // tiros de fato chegam.
+    if (opts.weaponRange !== undefined && distance > opts.weaponRange) {
+      score *= 1 - PENALIDADE_FORA_DE_ALCANCE;
+    }
 
     out.push({ contact: c, distance, alignment, score });
   }

@@ -40,6 +40,11 @@ import { aimBand, aimBandColor, aimBandLabel, solveAim } from './game/aim';
 import { gravityTotal } from './game/gravity';
 import { fetchProgression, skillNodeIds } from './net/progressionApi';
 import { equippedFromInventory } from './data/consumables';
+import {
+  equippedTorpedo,
+  torpedoBlock,
+  torpedoBlockMessage,
+} from './data/torpedoes';
 import { fetchInventory, fetchItems } from './net/economyApi';
 import { createInputController } from './input/keyboard';
 import { startInputLoop } from './input/inputLoop';
@@ -643,9 +648,14 @@ async function bootstrap(): Promise<void> {
     input.attach();
     activeInput = input;
     const inputLoop = startInputLoop(net, input, 30, {
-      // O torpedo persegue o alvo TRAVADO (Tab). Sem alvo, a tecla não
-      // faz nada — o servidor precisa saber em quem.
-      lockedTarget: () => lockedTargetId,
+      // O alvo é o EFETIVO do HUD (travado no Tab ou automático), não
+      // só o travado.
+      //
+      // Usando `lockedTargetId`, quem nunca apertou Tab via um alvo no
+      // painel, apertava R e não acontecia nada — o pedido saía com
+      // alvo nulo e o servidor descartava em silêncio. É o mesmo defeito
+      // que a mira tinha, pela mesma causa.
+      lockedTarget: () => hudState.targetId,
     });
 
     // Controle conectado: avisa e diz qual é.
@@ -670,6 +680,21 @@ async function bootstrap(): Promise<void> {
     input.onAction('cycleTarget', () => {
       const next = cycleTarget(lockedTargetId, hudState.position, forward, collectContacts());
       lockedTargetId = next?.id ?? null;
+    });
+
+    // Torpedo: quando o lançamento NÃO pode sair, diga por quê.
+    //
+    // O servidor descarta o pedido em silêncio (sem lançador, fora de
+    // alcance, em espera). Do lado do jogador isso é indistinguível de
+    // um bug: a tecla não faz nada e não há o que aprender. O motivo é
+    // o que ensina — "fora de alcance" diz para se aproximar.
+    const lancadorEquipado = equippedTorpedo(slots.map((sl) => sl.templateId));
+    input.onAction('launchTorpedo', () => {
+      const motivo = torpedoBlock(
+        lancadorEquipado,
+        hudState.targetId !== null ? hudState.targetDistance : null,
+      );
+      if (motivo) hud.toast(torpedoBlockMessage(motivo, lancadorEquipado), 'bad');
     });
 
     /**
@@ -924,10 +949,14 @@ async function bootstrap(): Promise<void> {
       //
       // Contados a partir do snapshot: o payload traz `locked`, e um
       // torpedo que já perdeu a trava não deve mais alarmar.
+      // Só os que perseguem VOCÊ. Contar todos os travados fazia o
+      // alarme disparar quando o próprio jogador lançava um torpedo —
+      // a arma dele soando alerta contra ele mesmo.
+      const meuId = (globalThis as { __localEntityId?: number }).__localEntityId;
       let perseguindo = 0;
       for (const eid of getAllRemoteEntities().values()) {
         const m = getRemoteMeta(eid);
-        if (m?.torpedo?.locked) perseguindo += 1;
+        if (m?.torpedo?.locked && m.torpedo.target === meuId) perseguindo += 1;
       }
       hudState.incomingTorpedoes = perseguindo;
 
@@ -940,7 +969,20 @@ async function bootstrap(): Promise<void> {
         const locked = lockedTargetId !== null
           ? contacts.find((c) => c.id === lockedTargetId) ?? null
           : null;
-        const target = locked ?? pickTarget(hudState.position, forward, contacts);
+        // O alcance da arma entra na escolha automática: sem ele, o
+        // travamento pegava rotineiramente alguém fora de alcance e a
+        // mira respondia "SEM SOLUÇÃO" — o raio de travamento é mais que
+        // o dobro do alcance de um canhão linear.
+        const target =
+          locked ??
+          pickTarget(
+            hudState.position,
+            forward,
+            contacts,
+            armaPrimaria
+              ? { weaponRange: armaPrimaria.velocidade * armaPrimaria.alcanceSegundos }
+              : {},
+          );
         if (target) {
           hudState.targetId = target.id;
           hudState.targetName = target.name ?? `Contato ${target.id}`;

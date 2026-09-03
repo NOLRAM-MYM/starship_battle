@@ -1742,6 +1742,7 @@ pub fn build_dynamic_snapshot(
                 radius: t.profile.radius,
                 hp_ratio: (t.hp / t.profile.hp).clamp(0.0, 1.0),
                 locked: t.target.is_some(),
+                target: t.target,
             })),
         });
     }
@@ -1967,6 +1968,7 @@ pub fn build_snapshot(world: &World) -> crate::net::protocol::SnapshotData {
                 radius: t.profile.radius,
                 hp_ratio: (t.hp / t.profile.hp).clamp(0.0, 1.0),
                 locked: t.target.is_some(),
+                target: t.target,
             })),
         });
     }
