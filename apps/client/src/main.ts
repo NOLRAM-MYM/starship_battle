@@ -792,7 +792,45 @@ async function bootstrap(): Promise<void> {
             z: Transform.posZ[eid] ?? 0,
           },
           faction: aliado ? 'ally' : 'hostile',
+          kind: 'ship',
           hpRatio: m.hpRatio,
+        });
+      }
+
+      // Torpedos como CONTATOS: abatê-los é uma das quatro defesas, e
+      // sem poder mirá-los ela existia na simulação e não na prática.
+      //
+      // Só os que ameaçam o seu lado — quem eles perseguem diz de quem
+      // são. Marcar os próprios como alvo faria o jogador gastar tiros
+      // na própria arma.
+      for (const eid of getAllRemoteEntities().values()) {
+        const m = getRemoteMeta(eid);
+        if (!m?.torpedo) continue;
+        const alvoDele = m.torpedo.target;
+        if (alvoDele === null) continue;
+        const contraMim = alvoDele === myServerId;
+        let contraAliado = false;
+        if (!contraMim && meuTime !== 0) {
+          for (const e2 of getAllRemoteEntities().values()) {
+            const m2 = getRemoteMeta(e2);
+            if (m2 && m2.serverId === alvoDele && m2.team === meuTime) {
+              contraAliado = true;
+              break;
+            }
+          }
+        }
+        if (!contraMim && !contraAliado) continue;
+        out.push({
+          id: m.serverId,
+          name: 'Torpedo',
+          pos: {
+            x: Transform.posX[eid] ?? 0,
+            y: Transform.posY[eid] ?? 0,
+            z: Transform.posZ[eid] ?? 0,
+          },
+          faction: 'hostile',
+          kind: 'torpedo',
+          hpRatio: m.torpedo.hpRatio,
         });
       }
 

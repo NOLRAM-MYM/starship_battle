@@ -52,6 +52,8 @@ export function startInputLoop(
         launchTorpedo: snap.launchTorpedo ? (opts.lockedTarget?.() ?? null) : null,
         deployDecoys: snap.deployDecoys,
         fineControl: snap.fineControl,
+        // O alvo efetivo do HUD, para o rastreamento assistido.
+        aimTarget: opts.lockedTarget?.() ?? null,
         skill: snap.skill,
       },
     });

@@ -5,6 +5,7 @@ pub mod torpedo;
 pub mod training;
 pub mod warp;
 pub mod aim;
+pub mod aim_assist;
 pub mod consumables;
 pub mod flight;
 pub mod skills;

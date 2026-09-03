@@ -113,6 +113,14 @@ pub struct Torpedo {
     pub target: Option<u32>,
     /// Direção atual, unitária.
     pub dir: [f32; 3],
+    /// Direção do passo anterior, para medir a curva REAL.
+    ///
+    /// A capacidade de curva (`profile.turn_rate`) diz o quanto ele
+    /// PODERIA virar; um torpedo vindo em rota reta não está virando
+    /// nada. Usar a capacidade no lugar da curva real fazia todo torpedo
+    /// contar como esquiva máxima e desligava a mira assistida contra
+    /// ele — justamente a defesa que ela deveria viabilizar.
+    pub last_dir: [f32; 3],
     pub speed: f32,
     pub fuel_remaining: f32,
     pub hp: f32,
@@ -233,6 +241,7 @@ impl Torpedo {
             owner_team,
             target: Some(target),
             dir: norm(dir),
+            last_dir: norm(dir),
             // Sai devagar e acelera: dá ao alvo a fração de segundo que
             // torna a reação possível.
             speed: profile.speed * 0.35,
@@ -268,7 +277,26 @@ impl Torpedo {
             tp[1] - self_pos[1],
             tp[2] - self_pos[2],
         ];
+        self.last_dir = self.dir;
         self.dir = steer(self.dir, desejada, self.profile.turn_rate * dt);
+    }
+
+    /// Aceleração transversal REAL, em u/s².
+    ///
+    /// Medida pela mudança de direção entre dois passos, não pela
+    /// capacidade de curva: é o que distingue um torpedo em rota reta
+    /// (fácil de abater) de um em curva fechada (difícil).
+    pub fn transverse_accel(&self, dt: f32) -> f32 {
+        if dt <= 1e-6 {
+            return 0.0;
+        }
+        let c = (self.dir[0] * self.last_dir[0]
+            + self.dir[1] * self.last_dir[1]
+            + self.dir[2] * self.last_dir[2])
+            .clamp(-1.0, 1.0);
+        let ang = c.acos();
+        // a = v * ω
+        self.speed * (ang / dt)
     }
 
     /// Remove a trava.
@@ -386,6 +414,25 @@ mod tests {
         assert!(!t.take_damage(perfil().hp - 1.0));
         assert!(t.take_damage(2.0));
         assert!(t.expired());
+    }
+
+    #[test]
+    fn torpedo_em_rota_reta_nao_conta_como_esquiva() {
+        // A capacidade de curva não é a curva real. Confundir as duas
+        // fazia todo torpedo contar como esquiva máxima e desligava a
+        // mira assistida contra ele — a defesa que ela deveria viabilizar.
+        let mut t = Torpedo::new(perfil(), 1, 99, 1, [0.0, 0.0, 1.0], 9);
+        // Alvo bem à frente: nada a corrigir.
+        t.step(1.0 / 30.0, [0.0, 0.0, 0.0], Some([0.0, 0.0, 500.0]));
+        assert!(t.transverse_accel(1.0 / 30.0) < 1.0);
+    }
+
+    #[test]
+    fn torpedo_em_curva_fechada_conta_como_esquiva() {
+        let mut t = Torpedo::new(perfil(), 1, 99, 1, [0.0, 0.0, 1.0], 9);
+        // Alvo a 90°: curva no limite da capacidade.
+        t.step(1.0 / 30.0, [0.0, 0.0, 0.0], Some([500.0, 0.0, 0.0]));
+        assert!(t.transverse_accel(1.0 / 30.0) > 10.0);
     }
 
     #[test]

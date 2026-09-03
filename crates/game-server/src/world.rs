@@ -61,6 +61,14 @@ pub struct Ship {
     pub ang_rate: [f32; 3],
     /// Modo de precisão: reduz a taxa máxima para mira fina.
     pub fine_control: bool,
+    /// Entidade mirada, para o rastreamento assistido.
+    pub aim_target: Option<EntityId>,
+    /// Velocidade do tick anterior, para medir a esquiva do alvo.
+    ///
+    /// A aceleração transversal é o que derruba o rastreamento
+    /// assistido: sem guardar a velocidade anterior não há como
+    /// distinguir quem voa reto de quem acabou de guinar.
+    pub last_vel: [f32; 3],
     /// Time. Duas naves com o MESMO time não-zero são aliadas.
     ///
     /// O padrão de um jogador é o próprio `player_id`, o que dá combate
@@ -128,6 +136,8 @@ impl Default for Ship {
             owner_player_id: 0,
             ang_rate: [0.0; 3],
             fine_control: false,
+            aim_target: None,
+            last_vel: [0.0; 3],
             team: sim_core::ship::team::TEAM_NONE,
             name: String::new(),
             thrust_input: 0.0,
@@ -450,6 +460,8 @@ impl World {
             // sem nenhuma configuração. Um sistema de esquadrões só
             // precisa passar a atribuir o mesmo número a vários.
             team: player_id,
+            aim_target: None,
+            last_vel: [0.0; 3],
             name,
             thrust_input: 0.0,
             steer_input: 0.0,
@@ -886,6 +898,7 @@ impl World {
         skill: Option<ActiveSkill>,
         use_consumable: Option<u8>,
         fine_control: bool,
+        aim_target: Option<EntityId>,
     ) {
         // Lookup direto pelo índice, em vez de varrer todas as naves.
         let Some(&id) = self.player_ships.get(&player_id) else {
@@ -901,6 +914,7 @@ impl World {
         ship.roll_input = roll.clamp(-1.0, 1.0);
         ship.thrust_input = thrust.clamp(0.0, 1.0);
         ship.fine_control = fine_control;
+        ship.aim_target = aim_target;
         if fire {
             ship.pending_fire = true;
             // Guarda o maior valor até o disparo sair: se dois pacotes
@@ -1093,10 +1107,19 @@ impl World {
             // abaixava o nariz — os controles pareciam invertidos em
             // relação à nave. O contrato do protocolo é o intuitivo:
             // +1 = direita / nariz para cima.
+            // Rastreamento assistido: só enquanto a mira estiver
+            // segurada, e sempre SOMANDO ao comando do jogador — nunca
+            // substituindo. O auxílio corrige, não conduz.
+            let (assist_pitch, assist_yaw) = if fino {
+                assist_para(self, &ship, pos, rot, dt)
+            } else {
+                (0.0, 0.0)
+            };
+
             let new_rot = rotate_local(
                 &rot,
-                -taxas[0] * dt,
-                -taxas[1] * dt,
+                -(taxas[0] + assist_pitch) * dt,
+                -(taxas[1] + assist_yaw) * dt,
                 taxas[2] * dt,
             );
             // Thrust no eixo forward (local +Z → world +Z após rotação identity).
@@ -1157,6 +1180,12 @@ impl World {
                 z: pos.z + new_vel.z * dt,
             };
             // Cooldown e decrementado em try_fire_weapons.
+            // Guarda a velocidade DESTE tick para o próximo medir a
+            // aceleração. É o que distingue quem voa reto de quem acabou
+            // de guinar — e a esquiva é a defesa contra o rastreamento
+            // assistido.
+            // ( já é mutável, vindo da desestruturação do laço)
+            ship.last_vel = [vel.x, vel.y, vel.z];
             self.ships.insert(id, (new_pos, new_vel, new_rot, ship));
         }
 
@@ -1526,6 +1555,104 @@ fn mul_quat(a: &Rotation, b: &Rotation) -> Rotation {
 }
 
 /// Renormaliza. Sem isto, o erro de ponto flutuante acumula ao longo de
+/// Taxas do rastreamento assistido para uma nave, neste tick.
+///
+/// Devolve `(pitch, yaw)` em rad/s para SOMAR ao comando do jogador.
+/// Zero sempre que faltar alvo, o alvo for aliado, ou a situação não
+/// autorizar o auxílio — as regras de equilíbrio vivem em
+/// `sim_core::ship::aim_assist`, aqui só se junta a informação.
+///
+/// O alvo pode ser uma NAVE ou um TORPEDO: abater o torpedo que vem na
+/// sua direção é uma das quatro defesas, e é justamente o tiro mais
+/// difícil do jogo — um objeto pequeno, rápido e em curva. Sem poder
+/// mirá-lo, a defesa existia na simulação e não na prática.
+fn assist_para(
+    world: &World,
+    ship: &Ship,
+    pos: Position,
+    rot: Rotation,
+    dt: f32,
+) -> (f32, f32) {
+    use sim_core::ship::aim::{solve, AimInput};
+    use sim_core::ship::aim_assist::{assist_rates, AssistInput, DEFAULT_ASSIST};
+
+    let Some(alvo_id) = ship.aim_target else {
+        return (0.0, 0.0);
+    };
+
+    // Alvo pode ser nave ou torpedo. Para a nave também se checa a
+    // aliança: o auxílio não pode ajudar a acertar o próprio esquadrão.
+    let (alvo_pos, alvo_vel, alvo_accel, alvo_em_dobra) =
+        if let Some((p, v, _, s)) = world.ships.get(&alvo_id) {
+            if s.team != sim_core::ship::team::TEAM_NONE && s.team == ship.team {
+                return (0.0, 0.0);
+            }
+            // Aceleração transversal do alvo: é o que mede a esquiva.
+            let dv = [
+                (v.x - s.last_vel[0]) / dt.max(1e-4),
+                (v.y - s.last_vel[1]) / dt.max(1e-4),
+                (v.z - s.last_vel[2]) / dt.max(1e-4),
+            ];
+            let a = (dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]).sqrt();
+            (*p, [v.x, v.y, v.z], a, s.warp_remaining > 0.0)
+        } else if let Some((p, t)) = world.torpedoes.get(&alvo_id) {
+            // Torpedo em curva acelera transversalmente o tempo todo; a
+            // aceleração aqui é a da própria trajetória, o que já torna
+            // um torpedo manobrando mais difícil de abater que um em
+            // rota reta.
+            let v = [
+                t.dir[0] * t.speed,
+                t.dir[1] * t.speed,
+                t.dir[2] * t.speed,
+            ];
+            let a = t.transverse_accel(dt);
+            (*p, v, a, false)
+        } else {
+            return (0.0, 0.0);
+        };
+
+    // Onde atirar, não onde o alvo está: apontar para a posição atual
+    // erra por antecipação, e o auxílio estaria atrapalhando.
+    let g = world.gravity_accel([pos.x, pos.y, pos.z]);
+    let sol = solve(&AimInput {
+        shooter_pos: [pos.x, pos.y, pos.z],
+        shooter_vel: [0.0, 0.0, 0.0],
+        target_pos: [alvo_pos.x, alvo_pos.y, alvo_pos.z],
+        target_vel: alvo_vel,
+        projectile_speed: ship.weapon.speed,
+        gravity: g,
+        projectile_ttl: ship.weapon.ttl,
+    });
+    if !sol.reachable {
+        return (0.0, 0.0);
+    }
+
+    let para_mira = [
+        sol.lead_point[0] - pos.x,
+        sol.lead_point[1] - pos.y,
+        sol.lead_point[2] - pos.z,
+    ];
+    let r = assist_rates(
+        &AssistInput {
+            forward: forward(&rot),
+            to_lead: para_mira,
+            target_transverse_accel: alvo_accel,
+            target_warping: alvo_em_dobra,
+            // Taxa EFETIVA, não a nominal.
+            //
+            // O auxílio só age com a mira segurada, e nesse modo o
+            // jogador comanda apenas `fine_scale` (32%) da rotação. Um
+            // teto calculado sobre a taxa cheia deixava a assistência
+            // mais forte que o próprio piloto: mandar virar para o outro
+            // lado não vencia. Sobre a taxa efetiva, ela é sempre
+            // minoria.
+            turn_rate: ship.turn_rate * sim_core::ship::flight::DEFAULT_TUNING.fine_scale,
+        },
+        &DEFAULT_ASSIST,
+    );
+    (r.pitch, r.yaw)
+}
+
 /// milhares de ticks e a nave começa a deformar/escorregar.
 fn normalize_quat(q: &Rotation) -> Rotation {
     let len = (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w).sqrt();
@@ -2228,7 +2355,7 @@ mod tests {
             z: corpo.pos[2],
         };
         // Sem empuxo: só a gravidade age.
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None, false);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None, false, None);
         for _ in 0..30 {
             w.step(1.0 / 30.0);
         }
@@ -2261,7 +2388,7 @@ mod tests {
         // --- pitch ---
         let mut w = World::new();
         w.spawn_player_ship(1, "p".into());
-        w.set_input(1, 0.0, 1.0, 0.0, 0.0, false, 0.0, None, None, false);
+        w.set_input(1, 0.0, 1.0, 0.0, 0.0, false, 0.0, None, None, false, None);
         for _ in 0..10 { w.step(1.0 / 30.0); }
         let f = frente(&w);
         assert!(f[1] > 0.05, "W deveria levantar o nariz, frente={f:?}");
@@ -2269,7 +2396,7 @@ mod tests {
         // --- yaw ---
         let mut w = World::new();
         w.spawn_player_ship(1, "p".into());
-        w.set_input(1, 1.0, 0.0, 0.0, 0.0, false, 0.0, None, None, false);
+        w.set_input(1, 1.0, 0.0, 0.0, 0.0, false, 0.0, None, None, false, None);
         for _ in 0..10 { w.step(1.0 / 30.0); }
         let f = frente(&w);
         assert!(f[0] < -0.05, "D deveria virar para a direita da tela (-X), frente={f:?}");
@@ -2279,7 +2406,7 @@ mod tests {
     fn dobrar(w: &mut World, pid: u32) {
         let id = w.player_ships[&pid];
         w.ships.get_mut(&id).unwrap().3.skills.unlock(ActiveSkill::Dash);
-        w.set_input(pid, 0.0, 0.0, 0.0, 1.0, false, 0.0, Some(ActiveSkill::Dash), None, false);
+        w.set_input(pid, 0.0, 0.0, 0.0, 1.0, false, 0.0, Some(ActiveSkill::Dash), None, false, None);
     }
 
     #[test]
@@ -2294,7 +2421,7 @@ mod tests {
             if dobrando {
                 dobrar(&mut w, 1);
             } else {
-                w.set_input(1, 0.0, 0.0, 0.0, 1.0, false, 0.0, None, None, false);
+                w.set_input(1, 0.0, 0.0, 0.0, 1.0, false, 0.0, None, None, false, None);
             }
             for _ in 0..30 { w.step(1.0 / 30.0); }
             let fim = w.player_position(1).unwrap();
@@ -2337,7 +2464,7 @@ mod tests {
             vel.y = 0.0;
             vel.z = 0.0;
         }
-        w.set_input(2, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None, false);
+        w.set_input(2, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None, false, None);
         for _ in 0..5 { w.step(1.0 / 30.0); }
 
         let (_, vel, _, _) = &w.ships[&perseguidor];
@@ -2397,7 +2524,7 @@ mod tests {
             w.ships.get_mut(&alvo).unwrap().3.hull_max = 100000.0;
             w.ships.get_mut(&alvo).unwrap().3.hull_hp = 100000.0;
             let antes = w.ships[&alvo].3.hull_hp;
-            w.set_input(1, 0.0, 0.0, 0.0, 0.0, true, carga, None, None, false);
+            w.set_input(1, 0.0, 0.0, 0.0, 0.0, true, carga, None, None, false, None);
             for _ in 0..8 { w.step(1.0 / 30.0); }
             antes - w.ships.get(&alvo).map(|s| s.3.hull_hp).unwrap_or(0.0)
         };
@@ -2916,7 +3043,7 @@ mod habilidades_e_consumiveis {
         let id = w.player_ships[&1];
         w.ships.get_mut(&id).unwrap().3.hull_hp = 100.0;
 
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Repair), None, false);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Repair), None, false, None);
         w.step(1.0 / 30.0);
         let depois_de_1_tick = w.ships[&id].3.hull_hp;
         assert!(depois_de_1_tick > 100.0, "deveria começar a curar");
@@ -2937,7 +3064,7 @@ mod habilidades_e_consumiveis {
         let mut w = mundo_com(&[1]);
         let id = w.player_ships[&1];
         w.ships.get_mut(&id).unwrap().3.hull_hp = 100.0;
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Repair), None, false);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Repair), None, false, None);
 
         for _ in 0..(30 * 6) {
             w.step(1.0 / 30.0);
@@ -2964,7 +3091,7 @@ mod habilidades_e_consumiveis {
             z: p.z,
         };
 
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None, false);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None, false, None);
         w.step(1.0 / 30.0);
 
         assert!(
@@ -2977,7 +3104,7 @@ mod habilidades_e_consumiveis {
     fn pem_nao_atinge_quem_usou() {
         let mut w = mundo_com(&[1]);
         let id = w.player_ships[&1];
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None, false);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None, false, None);
         w.step(1.0 / 30.0);
         assert_eq!(w.ships[&id].3.emp_remaining, 0.0);
     }
@@ -2992,7 +3119,7 @@ mod habilidades_e_consumiveis {
             y: p.y,
             z: p.z,
         };
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None, false);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None, false, None);
         w.step(1.0 / 30.0);
         assert_eq!(w.ships[&alvo].3.emp_remaining, 0.0);
     }
@@ -3004,7 +3131,7 @@ mod habilidades_e_consumiveis {
         w.ships.get_mut(&id).unwrap().3.emp_remaining = 3.0;
         let projeteis_antes = w.projectiles.len();
 
-        w.set_input(1, 0.0, 0.0, 0.0, 1.0, true, 0.0, None, None, false);
+        w.set_input(1, 0.0, 0.0, 0.0, 1.0, true, 0.0, None, None, false, None);
         for _ in 0..10 {
             w.step(1.0 / 30.0);
         }
@@ -3026,7 +3153,7 @@ mod habilidades_e_consumiveis {
         w.apply_consumables(1, &[carga("repair_kit", 2)]);
         w.ships.get_mut(&id).unwrap().3.hull_hp = 100.0;
 
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false, None);
         w.step(1.0 / 30.0);
 
         // Instantâneo, ao contrário da skill de reparo: é o que o
@@ -3047,7 +3174,7 @@ mod habilidades_e_consumiveis {
             s.hull_hp = 200.0;
         }
 
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false, None);
         w.step(1.0 / 30.0);
 
         assert!(w.ships[&id].3.shield_hp > 200.0, "escudo deveria subir");
@@ -3061,7 +3188,7 @@ mod habilidades_e_consumiveis {
         w.apply_consumables(1, &[carga("repair_kit", 1)]);
         w.ships.get_mut(&id).unwrap().3.hull_hp = 100.0;
 
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false, None);
         w.step(1.0 / 30.0);
         let apos_primeiro = w.ships[&id].3.hull_hp;
 
@@ -3070,7 +3197,7 @@ mod habilidades_e_consumiveis {
             w.step(1.0 / 30.0);
         }
         w.ships.get_mut(&id).unwrap().3.hull_hp = apos_primeiro;
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false, None);
         w.step(1.0 / 30.0);
 
         assert_eq!(w.ships[&id].3.hull_hp, apos_primeiro);
@@ -3090,7 +3217,7 @@ mod habilidades_e_consumiveis {
         // recusa por cooldown.
         let mut w = mundo_com(&[1]);
         w.apply_consumables(1, &[carga("repair_kit", 3)]);
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false, None);
         w.step(1.0 / 30.0);
 
         let evento = w.events.iter().find_map(|e| match e {
@@ -4356,3 +4483,250 @@ mod campo_de_provas {
         );
     }
 }
+
+#[cfg(test)]
+mod mira_assistida {
+    //! O rastreamento assistido, no mundo de verdade.
+    //!
+    //! A tentação seria travar a mira no alvo, o que mataria o jogo:
+    //! quem aperta o botão acerta. Estes testes fixam as três limitações
+    //! que separam um auxílio de uma trapaça — não adquire alvo, perde
+    //! para a esquiva, e some na dobra — e o teto que garante que quem
+    //! pilota continua sendo o jogador.
+
+    use super::*;
+
+    /// Ângulo entre o nariz da nave e a direção do alvo, em radianos.
+    fn erro_de_mira(w: &World, atirador: EntityId, alvo: EntityId) -> f32 {
+        let (pa, _, rot, _) = &w.ships[&atirador];
+        let (pb, _, _, _) = &w.ships[&alvo];
+        let f = forward(rot);
+        let d = [pb.x - pa.x, pb.y - pa.y, pb.z - pa.z];
+        let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        if l < 1e-6 {
+            return 0.0;
+        }
+        let cos = (f[0] * d[0] + f[1] * d[1] + f[2] * d[2]) / l;
+        cos.clamp(-1.0, 1.0).acos()
+    }
+
+    /// Arena com o alvo a `graus` do nariz do atirador, à distância `d`.
+    fn cenario(graus: f32, d: f32) -> (World, EntityId, EntityId) {
+        let mut w = World::new();
+        w.spawn_player_ship(1, "atirador".into());
+        w.spawn_player_ship(2, "alvo".into());
+        w.apply_loadout(1, &["railgun_s".to_string(), "engine_mk3".to_string()]);
+        w.apply_loadout(2, &["railgun_s".to_string(), "engine_mk3".to_string()]);
+
+        let a = w.player_ships[&1];
+        let b = w.player_ships[&2];
+
+        // Atirador na origem, olhando para +Z (quaternion identidade).
+        w.ships.get_mut(&a).unwrap().0 = Position { x: 0.0, y: 0.0, z: 0.0 };
+        w.ships.get_mut(&a).unwrap().2 = Rotation::default();
+
+        let r = graus.to_radians();
+        w.ships.get_mut(&b).unwrap().0 = Position {
+            x: d * r.sin(),
+            y: 0.0,
+            z: d * r.cos(),
+        };
+        // Alvo parado, para o teste medir só o auxílio.
+        w.ships.get_mut(&b).unwrap().1 = Velocity::default();
+        (w, a, b)
+    }
+
+    /// Roda `n` ticks com a mira segurada (ou não) e devolve o erro final.
+    fn simular(graus: f32, assistido: bool, n: usize) -> f32 {
+        let (mut w, a, b) = cenario(graus, 300.0);
+        let alvo = if assistido { Some(b) } else { None };
+        for _ in 0..n {
+            // Sem nenhum comando de rotação: o que mover a nave é só o
+            // auxílio.
+            w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None, assistido, alvo);
+            w.step(1.0 / 30.0);
+        }
+        erro_de_mira(&w, a, b)
+    }
+
+    #[test]
+    fn segurar_a_mira_aproxima_o_nariz_do_alvo() {
+        let inicial = 6f32.to_radians();
+        let com = simular(6.0, true, 30);
+        assert!(
+            com < inicial * 0.6,
+            "o auxílio deveria fechar o erro: {inicial} -> {com}"
+        );
+    }
+
+    #[test]
+    fn sem_segurar_a_mira_a_nave_nao_se_move_sozinha() {
+        // O auxílio só vale enquanto a mira está segurada. Se agisse
+        // sempre, a nave giraria sozinha e o jogador perderia o controle.
+        let inicial = 6f32.to_radians();
+        let sem = simular(6.0, false, 30);
+        assert!((sem - inicial).abs() < 0.01, "{inicial} vs {sem}");
+    }
+
+    #[test]
+    fn fora_do_cone_o_auxilio_nao_adquire_o_alvo() {
+        // É o que impede a trava: achar o alvo continua sendo trabalho do
+        // jogador. Sem isto, apertar o botão bastaria para acertar.
+        let inicial = 45f32.to_radians();
+        let com = simular(45.0, true, 30);
+        assert!((com - inicial).abs() < 0.01, "{inicial} vs {com}");
+    }
+
+    #[test]
+    fn o_auxilio_nao_ultrapassa_o_alvo() {
+        // Girar além do erro faria a mira oscilar em torno do alvo em vez
+        // de assentar nele — pior que não ajudar.
+        let com = simular(6.0, true, 120);
+        assert!(com < 0.02, "deveria assentar, ficou em {com} rad");
+    }
+
+    #[test]
+    fn o_alvo_em_dobra_escapa_do_auxilio() {
+        let (mut w, a, b) = cenario(6.0, 300.0);
+        w.ships.get_mut(&b).unwrap().3.warp_remaining = 5.0;
+        let inicial = erro_de_mira(&w, a, b);
+        let pos_alvo = w.ships[&b].0;
+        for _ in 0..30 {
+            w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None, true, Some(b));
+            w.step(1.0 / 30.0);
+            // Congela o alvo: a dobra o empurra, e um alvo que se move
+            // mudaria o ângulo por conta própria — o teste mediria o
+            // deslocamento dele, não o auxílio.
+            w.ships.get_mut(&b).unwrap().0 = pos_alvo;
+        }
+        // Tolerância de 0.01 rad: mesmo sem empuxo as naves derivam pela
+        // gravidade (medido: ~0.55 u em 20 ticks), e a 300 unidades isso
+        // move o ângulo alguns milésimos. Exigir igualdade exata mediria
+        // a gravidade, não o auxílio.
+        assert!(
+            (erro_de_mira(&w, a, b) - inicial).abs() < 0.01,
+            "a dobra deveria cortar o auxílio"
+        );
+    }
+
+    #[test]
+    fn nao_ajuda_a_acertar_um_aliado() {
+        // O auxílio não pode conduzir a mira para o próprio esquadrão —
+        // e os tiros nem acertariam.
+        let (mut w, a, b) = cenario(6.0, 300.0);
+        let meu_time = w.ships[&a].3.team;
+        w.ships.get_mut(&b).unwrap().3.team = meu_time;
+        let inicial = erro_de_mira(&w, a, b);
+        for _ in 0..30 {
+            w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None, true, Some(b));
+            w.step(1.0 / 30.0);
+        }
+        assert!((erro_de_mira(&w, a, b) - inicial).abs() < 0.01);
+    }
+
+    #[test]
+    fn um_alvo_inexistente_nao_quebra_nada() {
+        let (mut w, a, b) = cenario(6.0, 300.0);
+        let inicial = erro_de_mira(&w, a, b);
+        for _ in 0..10 {
+            w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None, true, Some(99_999));
+            w.step(1.0 / 30.0);
+        }
+        assert!((erro_de_mira(&w, a, b) - inicial).abs() < 0.01);
+    }
+
+    #[test]
+    fn o_comando_do_jogador_continua_vencendo_o_auxilio() {
+        // O teto existe para isto: querer virar para o outro lado tem que
+        // funcionar mesmo com a mira segurada, senão o jogador vira
+        // passageiro.
+        let (mut w, a, b) = cenario(6.0, 300.0);
+        let inicial = erro_de_mira(&w, a, b);
+        for _ in 0..30 {
+            // Guinada máxima para LONGE do alvo.
+            //
+            // O alvo está em +X, e no contrato do protocolo `steer:+1` é
+            // "para a direita da tela" — que com a frente em +Z leva o
+            // nariz para -X. Ou seja: +1 afasta. Assumir o contrário
+            // fazia o teste mandar virar PARA o alvo e depois estranhar
+            // que o erro diminuísse.
+            w.set_input(1, 1.0, 0.0, 0.0, 0.0, false, 0.0, None, None, true, Some(b));
+            w.step(1.0 / 30.0);
+        }
+        assert!(
+            erro_de_mira(&w, a, b) > inicial,
+            "o jogador deveria conseguir virar contra o auxílio"
+        );
+    }
+
+    #[test]
+    fn da_para_mirar_num_torpedo() {
+        // Abater o torpedo é uma das quatro defesas; sem poder mirá-lo,
+        // ela existia na simulação e não na prática.
+        //
+        // Comparação A/B — com e sem a mira segurada, no MESMO cenário.
+        // Um limiar absoluto não serviria: o torpedo manobra enquanto
+        // persegue, e manobrar reduz o auxílio de propósito. O que
+        // interessa é que segurar a mira ajude, não quanto.
+        fn erro_final(assistido: bool) -> f32 {
+            let mut w = World::new();
+            w.spawn_player_ship(1, "defensor".into());
+            w.spawn_player_ship(2, "atacante".into());
+            w.apply_loadout(1, &["railgun_s".to_string()]);
+            w.apply_loadout(2, &["torpedo_seeker".to_string()]);
+            let eu = w.player_ships[&1];
+            let inimigo = w.player_ships[&2];
+            w.ships.get_mut(&eu).unwrap().0 = Position { x: 0.0, y: 0.0, z: 0.0 };
+            w.ships.get_mut(&eu).unwrap().2 = Rotation::default();
+            // Atacante a 6° do meu nariz: o torpedo nasce fora do eixo
+            // e vem na minha direção. Teleportá-lo depois de lançado,
+            // como uma versão anterior deste teste fazia, produzia um
+            // torpedo que PASSAVA de lado em vez de perseguir — e aí a
+            // comparação media a trajetória dele, não o auxílio.
+            let r = 6f32.to_radians();
+            w.ships.get_mut(&inimigo).unwrap().0 = Position {
+                x: 600.0 * r.sin(),
+                y: 0.0,
+                z: 600.0 * r.cos(),
+            };
+            // Aponta o atacante para mim, para o torpedo sair na direção
+            // certa.
+            w.ships.get_mut(&inimigo).unwrap().2 = Rotation {
+                x: 0.0,
+                y: 1.0,
+                z: 0.0,
+                w: 0.0,
+            };
+
+            w.launch_torpedo(2, eu);
+            let tid = *w.torpedoes.keys().next().expect("torpedo lançado");
+
+            let mut ultimo = r;
+            for _ in 0..40 {
+                let alvo = if assistido { Some(tid) } else { None };
+                w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None, assistido, alvo);
+                w.step(1.0 / 30.0);
+                let Some((pt, _)) = w.torpedoes.get(&tid) else { break };
+                let (pa, _, rot, _) = &w.ships[&eu];
+                let f = forward(rot);
+                let d = [pt.x - pa.x, pt.y - pa.y, pt.z - pa.z];
+                let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+                if l > 1e-6 {
+                    ultimo = ((f[0] * d[0] + f[1] * d[1] + f[2] * d[2]) / l)
+                        .clamp(-1.0, 1.0)
+                        .acos();
+                }
+            }
+            ultimo
+        }
+
+        let com = erro_final(true);
+        let sem = erro_final(false);
+        assert!(
+            com < sem,
+            "segurar a mira deveria aproximar do torpedo: com={com} sem={sem}"
+        );
+    }
+
+}
+

@@ -9,7 +9,7 @@
  *   - bool: u8 (0/1)
  */
 
-export const PROTOCOL_VERSION = 13 as const;
+export const PROTOCOL_VERSION = 14 as const;
 /**
  * Precisa bater com `SNAPSHOT_RATE_HZ` do servidor — é o intervalo que a
  * interpolação usa como alvo. O servidor tica a 30Hz e envia snapshot a
@@ -68,6 +68,14 @@ export interface InputMsg {
   deployDecoys: boolean;
   /** Modo de precisão: reduz a taxa de rotação para mira fina. */
   fineControl: boolean;
+  /**
+   * Entidade mirada, para o rastreamento assistido.
+   *
+   * O servidor não tem como saber qual contato o HUD elegeu — a escolha
+   * mistura alinhamento, distância e alcance da arma, que são regras de
+   * interface. Ele recebe o id e confere tudo antes de mover a nave.
+   */
+  aimTarget: number | null;
   skill: ActiveSkill | null;
 }
 export interface PingMsg {
@@ -691,6 +699,12 @@ export function encodeClientMsg(msg: ClientMsg): Uint8Array {
       }
       w.writeBool(msg.payload.deployDecoys);
       w.writeBool(msg.payload.fineControl);
+      if (msg.payload.aimTarget === null || msg.payload.aimTarget === undefined) {
+        w.writeU8(0);
+      } else {
+        w.writeU8(1);
+        w.writeU32(msg.payload.aimTarget);
+      }
       break;
     case 'Ping':
       w.writeU32(CLIENT_VARIANT.Ping);

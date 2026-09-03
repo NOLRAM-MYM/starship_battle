@@ -21,6 +21,14 @@ export interface Contact {
   pos: Vec3;
   /** 'hostile' entra na mira automática; 'neutral'/'ally' não. */
   faction: 'hostile' | 'neutral' | 'ally';
+  /**
+   * O que o contato é.
+   *
+   * Um torpedo a caminho mata em segundos; uma nave a mesma distância
+   * não. Sem distinguir os dois, a escolha automática mandaria o jogador
+   * atirar na nave enquanto o torpedo chega.
+   */
+  kind?: 'ship' | 'torpedo';
   hpRatio: number | null;
 }
 
@@ -60,6 +68,27 @@ export interface TargetingOptions {
  * o jogador está perseguindo.
  */
 const PENALIDADE_FORA_DE_ALCANCE = 0.45;
+
+/**
+ * Ganho MÁXIMO de prioridade de um torpedo, quando ele está em cima.
+ *
+ * Abater o torpedo é uma das quatro defesas, e a que exige o tiro mais
+ * difícil do jogo: um objeto pequeno, rápido e em curva. Se ele não
+ * subisse na ordem, o jogador teria de encontrá-lo manualmente entre os
+ * contatos justamente nos segundos em que não há tempo para isso.
+ */
+const GANHO_TORPEDO = 1.6;
+
+/**
+ * Distância a partir da qual um torpedo deixa de ser urgente.
+ *
+ * A ameaça de um torpedo é o TEMPO ATÉ O IMPACTO, não a sua mera
+ * existência: a ~105 u/s, 400 unidades são uns quatro segundos. Com um
+ * ganho fixo, um torpedo a 1000 unidades — dez segundos de distância —
+ * ganhava de uma nave colada, e o jogador era mandado atirar longe
+ * enquanto levava tiro de perto.
+ */
+const ALCANCE_URGENTE_TORPEDO = 400;
 
 function sub(a: Vec3, b: Vec3): Vec3 {
   return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
@@ -109,6 +138,10 @@ export function rankTargets(
     // tiros de fato chegam.
     if (opts.weaponRange !== undefined && distance > opts.weaponRange) {
       score *= 1 - PENALIDADE_FORA_DE_ALCANCE;
+    }
+    if (c.kind === 'torpedo') {
+      const urgencia = Math.max(0, 1 - distance / ALCANCE_URGENTE_TORPEDO);
+      score *= 1 + (GANHO_TORPEDO - 1) * urgencia;
     }
 
     out.push({ contact: c, distance, alignment, score });

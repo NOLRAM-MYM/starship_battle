@@ -255,3 +255,42 @@ describe('pilotos e casco', () => {
     expect(chassisForArchetype(99)).toBe('interceptor');
   });
 });
+
+describe('prioridade de torpedo na mira', () => {
+  // Abater o torpedo é uma das quatro defesas contra ele, e a que exige
+  // o tiro mais difícil do jogo. Se ele não subisse na ordem, o jogador
+  // teria de encontrá-lo manualmente entre os contatos justamente nos
+  // segundos em que não há tempo para isso.
+  const origin = { x: 0, y: 0, z: 0 };
+  const forward = { x: 0, y: 0, z: -1 };
+
+  const nave: Contact = {
+    id: 1, name: 'Inimigo', pos: { x: 0, y: 0, z: -200 },
+    faction: 'hostile', kind: 'ship', hpRatio: 1,
+  };
+  const torpedo: Contact = {
+    id: 2, name: 'Torpedo', pos: { x: 0, y: 0, z: -220 },
+    faction: 'hostile', kind: 'torpedo', hpRatio: 1,
+  };
+
+  it('um torpedo a caminho ganha da nave a distância parecida', () => {
+    expect(pickTarget(origin, forward, [nave, torpedo])?.id).toBe(torpedo.id);
+  });
+
+  it('mas um torpedo distante perde para uma nave colada', () => {
+    // Ganho, não prioridade absoluta: a nave a 30 unidades é o perigo
+    // mais imediato.
+    const colada: Contact = { ...nave, pos: { x: 0, y: 0, z: -30 } };
+    const longe: Contact = { ...torpedo, pos: { x: 0, y: 0, z: -1000 } };
+    expect(pickTarget(origin, forward, [colada, longe])?.id).toBe(colada.id);
+  });
+
+  it('contato sem `kind` continua funcionando como nave', () => {
+    // O campo é opcional: código antigo que monta contatos sem ele não
+    // pode passar a receber prioridade de torpedo por acidente.
+    const semKind: Contact = { ...nave, id: 9 };
+    delete (semKind as { kind?: string }).kind;
+    const r = rankTargets(origin, forward, [semKind, torpedo]);
+    expect(r[0]?.contact.id).toBe(torpedo.id);
+  });
+});

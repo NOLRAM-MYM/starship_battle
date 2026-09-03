@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// v6: `Input` ganhou `fire_charge` (tiro carregado) e o mundo ganhou
 /// vórtices de dobra como tipo de entidade.
-pub const PROTOCOL_VERSION: u16 = 13;
+pub const PROTOCOL_VERSION: u16 = 14;
 
 /// Identificadores de efeito visual em `ServerMsg::Vfx`.
 ///
@@ -146,6 +146,15 @@ pub enum ClientMsg {
         launch_torpedo: Option<u32>,
         /// Soltar iscas de dispersão neste tick.
         deploy_decoys: bool,
+        /// Entidade que o jogador está mirando, para o rastreamento
+        /// assistido.
+        ///
+        /// O servidor não tem como saber qual contato o HUD elegeu — a
+        /// escolha mistura alinhamento, distância e alcance da arma, que
+        /// são regras de interface. Ele recebe o id e confere tudo o que
+        /// importa (existe? é hostil? está no cone?) antes de mover
+        /// qualquer coisa.
+        aim_target: Option<u32>,
         /// Modo de precisão: reduz a taxa de rotação para mira fina.
         ///
         /// É o equivalente aos propulsores vernier — a resposta grossa
@@ -433,6 +442,7 @@ mod tests {
             launch_torpedo: None,
             deploy_decoys: false,
             fine_control: false,
+            aim_target: None,
         };
         let bytes = bincode::serialize(&original).unwrap();
         let decoded: ClientMsg = bincode::deserialize(&bytes).unwrap();
@@ -599,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_is_v13() {
+    fn protocol_version_is_v14() {
         // v2: payloads por tipo. v3: estáticos por AOI. v4: pitch/roll.
         // v5: loadout no Join + corpos celestes. v6: tiro carregado +
         // vórtices de dobra. v7: aparência do projétil (arma + carga).
@@ -607,7 +617,8 @@ mod tests {
         // v10: torpedos teleguiados e iscas de dispersão.
         // v11: campo de provas. v12: time nas naves (amigo/inimigo).
         // v13: alvo do torpedo, para o alerta não contar os próprios.
-        assert_eq!(PROTOCOL_VERSION, 13);
+        // v14: alvo de mira, para o rastreamento assistido.
+        assert_eq!(PROTOCOL_VERSION, 14);
     }
 
     #[test]
