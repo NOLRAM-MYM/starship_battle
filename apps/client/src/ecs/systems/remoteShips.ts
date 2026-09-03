@@ -95,9 +95,14 @@ export function applySnapshot(snap: SnapshotData, receivedAt?: number): void {
   const seen = new Set<number>();
 
   for (const e of snap.entities) {
-    // Apenas Ship/Projectile são gerenciados aqui; Npc/Asteroid/Anomaly/Wreck
-    // são responsabilidade do sistema worldEntities (Task 5.3).
-    if (e.kind !== 'Ship' && e.kind !== 'Projectile') continue;
+    // Ship, Projectile e Torpedo são gerenciados aqui; Npc, Asteroid,
+    // Anomaly e Wreck pertencem ao sistema worldEntities.
+    //
+    // O torpedo estava fora desta lista e era DESCARTADO em silêncio: o
+    // servidor o enviava, o cliente jogava fora, e o alerta de
+    // perseguição nunca aparecia — a defesa contra ele dependia de o
+    // jogador adivinhar.
+    if (e.kind !== 'Ship' && e.kind !== 'Projectile' && e.kind !== 'Torpedo') continue;
     seen.add(e.id);
     let eid = byServerId.get(e.id);
     if (eid === undefined) {

@@ -9,7 +9,7 @@
  *   - bool: u8 (0/1)
  */
 
-export const PROTOCOL_VERSION = 10 as const;
+export const PROTOCOL_VERSION = 11 as const;
 /**
  * Precisa bater com `SNAPSHOT_RATE_HZ` do servidor — é o intervalo que a
  * interpolação usa como alvo. O servidor tica a 30Hz e envia snapshot a
@@ -35,6 +35,13 @@ export interface JoinMsg {
   skills: string[];
   /** Consumíveis levados para a arena, com as cargas. */
   consumables: ConsumableSlot[];
+  /**
+   * Entrar no campo de provas, com alvos de treino.
+   *
+   * Existe porque verificar as mecânicas exigia dois jogadores humanos
+   * coordenados, e mesmo assim o encontro era aleatório.
+   */
+  practice: boolean;
 }
 export interface InputMsg {
   /** -1..1 — guinada (yaw). */
@@ -619,6 +626,8 @@ export function encodeClientMsg(msg: ClientMsg): Uint8Array {
         w.writeString(c.templateId);
         w.writeU32(c.charges);
       }
+      // v11: campo de provas.
+      w.writeBool(msg.payload.practice);
       break;
     }
     case 'Input':

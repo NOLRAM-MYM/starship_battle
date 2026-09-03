@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// v6: `Input` ganhou `fire_charge` (tiro carregado) e o mundo ganhou
 /// vórtices de dobra como tipo de entidade.
-pub const PROTOCOL_VERSION: u16 = 10;
+pub const PROTOCOL_VERSION: u16 = 11;
 
 /// Identificadores de efeito visual em `ServerMsg::Vfx`.
 ///
@@ -102,7 +102,15 @@ pub enum ClientMsg {
         /// Vêm do inventário da conta. O servidor descarta ids que não
         /// conhece e limita o número de slots, então declarar cargas a
         /// mais não rende nada além do que o cinto aceita.
-        consumables: Vec<sim_core::ship::consumables::ConsumableSlot>
+        consumables: Vec<sim_core::ship::consumables::ConsumableSlot>,
+        /// Entrar no CAMPO DE PROVAS: o servidor cria alvos de treino ao
+        /// redor da nave.
+        ///
+        /// Existe porque verificar as mecânicas exigia dois jogadores
+        /// humanos coordenados, e mesmo assim o encontro era aleatório.
+        /// Sem um adversário confiável, mira, torpedo e defesas só
+        /// podiam ser testados em teste unitário.
+        practice: bool
     },
     /// Input contínuo (enviado a ~30Hz).
     Input {
@@ -563,13 +571,14 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_is_v10() {
+    fn protocol_version_is_v11() {
         // v2: payloads por tipo. v3: estáticos por AOI. v4: pitch/roll.
         // v5: loadout no Join + corpos celestes. v6: tiro carregado +
         // vórtices de dobra. v7: aparência do projétil (arma + carga).
         // v8: skills no Join. v9: consumíveis no Join e no Input.
         // v10: torpedos teleguiados e iscas de dispersão.
-        assert_eq!(PROTOCOL_VERSION, 10);
+        // v11: campo de provas.
+        assert_eq!(PROTOCOL_VERSION, 11);
     }
 
     #[test]

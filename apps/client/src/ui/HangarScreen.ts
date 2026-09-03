@@ -21,7 +21,8 @@ import './HangarScreen.css';
  */
 
 export interface HangarCallbacks {
-  onPlay: (loadoutId: number | string) => void;
+  /** `practice` entra com alvos de treino em volta. */
+  onPlay: (loadoutId: number | string, practice: boolean) => void;
   onOpenBuilder: () => void;
   /** Notifica o `HangarStage` para reconstruir a nave exibida. */
   onShipPreview?: (spec: ChassisSpec) => void;
@@ -34,7 +35,7 @@ export class HangarScreen {
   private profile: PilotProfile;
   /** Aviso transitório (exclusão, erro), mostrado sobre a frota. */
   private notice: { text: string; tone: 'good' | 'bad' } | null = null;
-  private onPlay: ((loadoutId: number | string) => void) | undefined;
+  private onPlay: ((loadoutId: number | string, practice: boolean) => void) | undefined;
   private onOpenBuilder: (() => void) | undefined;
   private onShipPreview: ((spec: ChassisSpec) => void) | undefined;
   private onOpenShop: (() => void) | undefined;
@@ -71,7 +72,7 @@ export class HangarScreen {
   }
 
   setCallbacks(
-    onPlay: (loadoutId: number | string) => void,
+    onPlay: (loadoutId: number | string, practice: boolean) => void,
     onOpenBuilder: () => void,
     onShipPreview?: (spec: ChassisSpec) => void,
     onOpenShop?: () => void,
@@ -277,6 +278,9 @@ export class HangarScreen {
             <button class="btn" id="hangar-shop">Loja</button>
             <button class="btn" id="hangar-keys">Controles</button>
             <button class="btn" id="hangar-build">Estaleiro</button>
+            <button class="btn" id="hangar-practice"
+              title="Arena com alvos de treino: um fixo para calibrar a mira, um móvel para a antecipação, e um caçador que lança torpedos"
+              ${this.hasSelection() ? '' : 'disabled'}>Campo de Provas</button>
             <button class="btn btn-primary" id="hangar-play"
               ${this.hasSelection() ? '' : 'disabled'}>Lançar</button>
           </div>
@@ -446,7 +450,17 @@ export class HangarScreen {
 
     this.root.querySelector('#hangar-play')?.addEventListener('click', () => {
       if (this.selectedLoadoutId !== null && this.onPlay) {
-        this.onPlay(this.selectedLoadoutId);
+        this.onPlay(this.selectedLoadoutId, false);
+      }
+    });
+
+    // Campo de provas: mesma arena, mas o servidor cria alvos de treino
+    // ao redor da nave. Verificar mira, torpedo e defesas exigia dois
+    // jogadores humanos coordenados — e mesmo assim o encontro era
+    // aleatório.
+    this.root.querySelector('#hangar-practice')?.addEventListener('click', () => {
+      if (this.selectedLoadoutId !== null && this.onPlay) {
+        this.onPlay(this.selectedLoadoutId, true);
       }
     });
   }

@@ -47,6 +47,7 @@ async fn client_connects_and_receives_welcome() {
             loadout: vec!["railgun_s".into()],
             skills: vec![],
             consumables: vec![],
+            practice: false,
         };
     let bytes = bincode::serialize(&join).unwrap();
     write.send(Message::Binary(bytes)).await.unwrap();

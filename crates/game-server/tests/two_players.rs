@@ -124,6 +124,7 @@ async fn dois_jogadores_se_veem_e_se_movem() {
             loadout: vec!["engine_mk3".into(), "railgun_s".into()],
             skills: vec![],
             consumables: vec![],
+            practice: false,
         },
     )
     .await;
@@ -143,6 +144,7 @@ async fn dois_jogadores_se_veem_e_se_movem() {
             loadout: vec!["engine_mk3".into(), "railgun_s".into()],
             skills: vec![],
             consumables: vec![],
+            practice: false,
         },
     )
     .await;
@@ -292,6 +294,7 @@ async fn entidades_estaticas_chegam_por_world_chunk_e_nao_no_snapshot() {
             loadout: vec!["engine_mk3".into(), "railgun_s".into()],
             skills: vec![],
             consumables: vec![],
+            practice: false,
         },
     )
     .await;
@@ -349,6 +352,7 @@ async fn cliente_com_protocolo_antigo_e_recusado() {
             loadout: vec!["engine_mk3".into(), "railgun_s".into()],
             skills: vec![],
             consumables: vec![],
+            practice: false,
         },
     )
     .await;

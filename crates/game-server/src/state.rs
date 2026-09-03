@@ -61,6 +61,8 @@ pub enum PlayerCommand {
         skills: Vec<String>,
         /// Consumíveis levados para a arena.
         consumables: Vec<sim_core::ship::consumables::ConsumableSlot>,
+        /// Criar alvos de treino ao redor da nave.
+        practice: bool,
     },
     Input {
         player_id: u32,
@@ -154,7 +156,14 @@ impl ServerState {
         Self {
             world: Arc::new(RwLock::new(world)),
             clients: Arc::new(RwLock::new(HashMap::new())),
-            next_player_id: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            // Começa em 1, e não em 0: o zero é o SENTINELA de "sem
+            // dono" usado por projéteis, NPCs e alvos de treino. Com a
+            // contagem começando em zero, o primeiro jogador a entrar
+            // ficava no mesmo "time" de tudo que não tem dono — os
+            // torpedos dos alvos de treino o atravessavam, e os tiros
+            // dele atravessavam os alvos. Silencioso, e só aparece para
+            // quem entra primeiro.
+            next_player_id: Arc::new(std::sync::atomic::AtomicU32::new(1)),
             commands: tx,
             command_rx: Arc::new(RwLock::new(Some(rx))),
         }
@@ -318,12 +327,22 @@ pub async fn run_simulation_loop(state: ServerState) {
 
             for cmd in command_buf.drain(..) {
                 match cmd {
-                    PlayerCommand::Join { player_id, name, loadout, skills, consumables } => {
+                    PlayerCommand::Join {
+                        player_id,
+                        name,
+                        loadout,
+                        skills,
+                        consumables,
+                        practice,
+                    } => {
                         world.spawn_player_ship(player_id, name);
                         // O loadout é aplicado logo após o spawn: os
                         // números vêm do catálogo do servidor.
                         world.apply_loadout_and_skills(player_id, &loadout, &skills);
                         world.apply_consumables(player_id, &consumables);
+                        if practice {
+                            world.spawn_training_range(player_id);
+                        }
                     }
                     PlayerCommand::Input {
                         player_id,
@@ -619,6 +638,7 @@ mod tests {
             loadout: vec!["railgun_s".into()],
             skills: vec![],
             consumables: vec![],
+            practice: false,
         });
 
         // Simula um tick do loop: drena e aplica.
@@ -630,5 +650,34 @@ mod tests {
             }
         }
         assert!(world.player_ships.contains_key(&3));
+    }
+}
+
+#[cfg(test)]
+mod sentinela_de_dono {
+    //! O id 0 é reservado.
+    //!
+    //! Projéteis, NPCs e alvos de treino usam `owner_player_id = 0` para
+    //! dizer "sem dono humano". Se um jogador real pudesse receber o id
+    //! 0, ele passaria a ser aliado de tudo isso: os tiros o
+    //! atravessariam e ele não seria alvo de nada. E só aconteceria com
+    //! quem entrasse primeiro, o que é o pior tipo de bug intermitente.
+
+    use super::*;
+
+    #[test]
+    fn nenhum_jogador_recebe_o_id_zero() {
+        let state = ServerState::new();
+        for _ in 0..50 {
+            assert_ne!(state.alloc_player_id(), 0, "0 é sentinela de 'sem dono'");
+        }
+    }
+
+    #[test]
+    fn os_ids_continuam_unicos() {
+        let state = ServerState::new();
+        let a = state.alloc_player_id();
+        let b = state.alloc_player_id();
+        assert_ne!(a, b);
     }
 }

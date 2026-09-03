@@ -44,6 +44,8 @@ export interface NetClientOptions {
    * é uma declaração, não uma concessão.
    */
   consumables?: ConsumableSlot[];
+  /** Entrar no campo de provas, com alvos de treino. */
+  practice?: boolean;
   reconnectDelayMs?: number;
   onStatus?: (status: 'connecting' | 'open' | 'closed') => void;
 }
@@ -71,6 +73,7 @@ export function connect(opts: NetClientOptions): NetClient {
           loadout: opts.loadout ?? [],
           skills: opts.skills ?? [],
           consumables: opts.consumables ?? [],
+          practice: opts.practice ?? false,
         },
       };
       ws?.send(encodeClientMsg(join));

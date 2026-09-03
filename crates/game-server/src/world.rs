@@ -52,6 +52,12 @@ pub struct Ship {
     pub hull_max: f32,
     pub shield_hp: f32,
     pub shield_max: f32,
+    /// Comportamento de alvo de treino, se esta nave for um.
+    ///
+    /// `None` para naves de jogador. Um alvo de treino é uma nave comum
+    /// com um roteiro: assim ele passa pelos mesmos caminhos de dano,
+    /// escudo e travamento que um adversário humano.
+    pub training: Option<sim_core::ship::training::TrainingDummy>,
     /// Lançador de torpedos equipado, se houver.
     pub torpedo: Option<sim_core::ship::torpedo::TorpedoProfile>,
     /// Espera até poder lançar outro torpedo.
@@ -112,6 +118,7 @@ impl Default for Ship {
             roll_input: 0.0,
             hull_hp: 100.0,
             hull_max: 100.0,
+            training: None,
             torpedo: None,
             torpedo_cooldown: 0.0,
             belt: Default::default(),
@@ -389,6 +396,7 @@ impl World {
             roll_input: 0.0,
             hull_hp: 100.0,
             hull_max: 100.0,
+            training: None,
             torpedo: None,
             torpedo_cooldown: 0.0,
             belt: Default::default(),
@@ -1125,6 +1133,7 @@ impl World {
         self.apply_body_hazards(dt);
 
         // Colisões: dano + destruição de naves.
+        self.step_training(dt);
         self.check_projectile_collisions();
         // Torpedos DEPOIS da colisão normal: um projétil que já acertou
         // uma nave não deve também abater um torpedo no mesmo tick.
@@ -3675,5 +3684,405 @@ mod torpedos_e_defesas {
             }
             outro => panic!("payload errado: {outro:?}"),
         }
+    }
+}
+
+impl World {
+    /// Monta o campo de provas ao redor da nave do jogador.
+    ///
+    /// Os alvos são NAVES de verdade, não um tipo à parte: assim eles
+    /// passam pelos mesmos caminhos de dano, escudo, travamento e
+    /// colisão que um adversário humano. Um alvo de treino com física
+    /// própria testaria o alvo de treino, não o jogo.
+    pub fn spawn_training_range(&mut self, player_id: u32) {
+        use sim_core::ship::training::{training_range, TrainingDummy};
+
+        let Some(&id) = self.player_ships.get(&player_id) else { return };
+        let Some((pos, _, _, _)) = self.ships.get(&id) else { return };
+        let centro = *pos;
+
+        for (i, kind) in training_range().into_iter().enumerate() {
+            // Espalhados em ângulos distintos ao redor do jogador, para
+            // não nascerem em linha e se esconderem uns atrás dos outros.
+            let ang = (i as f32) * (std::f32::consts::TAU / 3.0);
+            let d = kind.spawn_distance();
+            let ancora = Position {
+                x: centro.x + ang.cos() * d,
+                y: centro.y + (i as f32 - 1.0) * 30.0,
+                z: centro.z + ang.sin() * d,
+            };
+
+            let tid = self.alloc_id();
+            let mut ship = Ship {
+                // `owner_player_id` 0 marca "sem dono humano". É o que
+                // torna os alvos hostis a todos os jogadores sem
+                // precisar de um sistema de facções.
+                owner_player_id: 0,
+                name: kind.label().to_string(),
+                hull_max: kind.hull(),
+                hull_hp: kind.hull(),
+                shield_max: 200.0,
+                shield_hp: 200.0,
+                radius: 6.0,
+                training: Some(TrainingDummy::new(
+                    kind,
+                    [ancora.x, ancora.y, ancora.z],
+                )),
+                ..Default::default()
+            };
+            // O caçador precisa de lançador para poder atacar.
+            if kind == sim_core::ship::training::TrainingKind::Cacador {
+                ship.torpedo = sim_core::ship::torpedo::torpedo_profile("torpedo_seeker");
+            }
+
+            self.ships.insert(
+                tid,
+                (ancora, Velocity::default(), Rotation::default(), ship),
+            );
+        }
+    }
+
+    /// Avança os alvos de treino.
+    ///
+    /// A posição é ESCRITA diretamente, em vez de passar pelo laço de
+    /// voo: alvos de treino têm que ser previsíveis, e um alvo sujeito a
+    /// arrasto e gravidade sairia de curso e deixaria de exercitar o que
+    /// se quer medir. Tudo o mais — dano, escudo, travamento, colisão —
+    /// continua passando pelos caminhos normais.
+    fn step_training(&mut self, dt: f32) {
+        let alvo_humano = self
+            .player_ships
+            .values()
+            .next()
+            .and_then(|id| self.ships.get(id))
+            .map(|(p, _, _, _)| [p.x, p.y, p.z]);
+
+        let ids: Vec<EntityId> = self
+            .ships
+            .iter()
+            .filter(|(_, (_, _, _, s))| s.training.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+
+        let mut lancamentos: Vec<(EntityId, Position, u32)> = Vec::new();
+
+        for id in ids {
+            let Some((pos, vel, rot, ship)) = self.ships.get_mut(&id) else { continue };
+            let Some(dummy) = ship.training.as_mut() else { continue };
+            let acao = dummy.step(dt, alvo_humano.unwrap_or([0.0, 0.0, 0.0]));
+
+            pos.x = acao.position[0];
+            pos.y = acao.position[1];
+            pos.z = acao.position[2];
+            // A velocidade informada alimenta a mira do jogador: é ela
+            // que a solução de antecipação usa. Se divergisse do
+            // movimento real, o alvo que existe para treinar antecipação
+            // ensinaria o erro.
+            vel.x = acao.velocity[0];
+            vel.y = acao.velocity[1];
+            vel.z = acao.velocity[2];
+
+            // Aponta para o jogador, para o torpedo sair na direção
+            // certa e a silhueta fazer sentido.
+            if let Some(alvo) = alvo_humano {
+                let d = [alvo[0] - pos.x, alvo[1] - pos.y, alvo[2] - pos.z];
+                let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+                if l > 0.001 {
+                    *rot = look_rotation([d[0] / l, d[1] / l, d[2] / l]);
+                }
+            }
+
+            if acao.launch_torpedo && ship.torpedo.is_some() {
+                lancamentos.push((id, *pos, ship.owner_player_id));
+            }
+        }
+
+        // Lançamentos fora do laço: `self.ships` estava emprestado.
+        for (origem, pos, dono) in lancamentos {
+            let Some(alvo_id) = self.player_ships.values().next().copied() else { continue };
+            let Some(perfil) = self.ships.get(&origem).and_then(|(_, _, _, s)| s.torpedo) else {
+                continue;
+            };
+            let rot = self.ships[&origem].2;
+            let fwd = forward(&rot);
+            let torp =
+                sim_core::ship::torpedo::Torpedo::new(perfil, dono, fwd, alvo_id);
+            let saida = Position {
+                x: pos.x + fwd[0] * 6.0,
+                y: pos.y + fwd[1] * 6.0,
+                z: pos.z + fwd[2] * 6.0,
+            };
+            let tid = self.alloc_id();
+            self.torpedoes.insert(tid, (saida, torp));
+            self.events.push(crate::net::protocol::ServerMsg::Vfx {
+                effect_id: VFX_MUZZLE,
+                pos: [saida.x, saida.y, saida.z],
+            });
+        }
+    }
+}
+
+/// Rotação que aponta o eixo +Z (a frente da nave) para `dir`.
+fn look_rotation(dir: [f32; 3]) -> Rotation {
+    // Quaternion que leva +Z até `dir`, pelo caminho mais curto.
+    let f = [0.0f32, 0.0, 1.0];
+    let dot = f[0] * dir[0] + f[1] * dir[1] + f[2] * dir[2];
+    if dot > 0.999_999 {
+        return Rotation::default();
+    }
+    if dot < -0.999_999 {
+        // Oposto exato: gira 180° em torno de um eixo perpendicular.
+        return Rotation {
+            x: 0.0,
+            y: 1.0,
+            z: 0.0,
+            w: 0.0,
+        };
+    }
+    let eixo = [
+        f[1] * dir[2] - f[2] * dir[1],
+        f[2] * dir[0] - f[0] * dir[2],
+        f[0] * dir[1] - f[1] * dir[0],
+    ];
+    let s = ((1.0 + dot) * 2.0).sqrt();
+    let inv = 1.0 / s;
+    let q = Rotation {
+        x: eixo[0] * inv,
+        y: eixo[1] * inv,
+        z: eixo[2] * inv,
+        w: s * 0.5,
+    };
+    let n = (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w).sqrt();
+    if n < 1e-6 {
+        return Rotation::default();
+    }
+    Rotation {
+        x: q.x / n,
+        y: q.y / n,
+        z: q.z / n,
+        w: q.w / n,
+    }
+}
+
+#[cfg(test)]
+mod campo_de_provas {
+    //! O campo de provas precisa exercitar as mecânicas DE VERDADE.
+    //!
+    //! O risco de um modo de treino é ele testar a si mesmo: alvos com
+    //! física própria, imunes a dano, ou invisíveis para o travamento
+    //! dariam a sensação de estar verificando o jogo sem verificar nada.
+    //! Estes testes fixam que os alvos são naves comuns nos caminhos que
+    //! importam.
+
+    use super::*;
+    use sim_core::ship::training::TrainingKind;
+
+    fn arena_de_treino() -> (World, u32) {
+        let mut w = World::new();
+        w.spawn_player_ship(1, "piloto".into());
+        w.apply_loadout(1, &["railgun_s".to_string(), "engine_mk3".to_string()]);
+        w.spawn_training_range(1);
+        (w, 1)
+    }
+
+    fn alvos(w: &World) -> Vec<EntityId> {
+        let mut v: Vec<EntityId> = w
+            .ships
+            .iter()
+            .filter(|(_, (_, _, _, s))| s.training.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn cria_os_tres_alvos() {
+        let (w, _) = arena_de_treino();
+        assert_eq!(alvos(&w).len(), 3);
+    }
+
+    #[test]
+    fn os_alvos_nascem_separados_uns_dos_outros() {
+        // Empilhados, escondem-se atrás uns dos outros e não dá para
+        // escolher qual exercitar.
+        let (w, _) = arena_de_treino();
+        let ids = alvos(&w);
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                let a = w.ships[&ids[i]].0;
+                let b = w.ships[&ids[j]].0;
+                assert!(
+                    dist_sq(a, b).sqrt() > 50.0,
+                    "alvos {i} e {j} nasceram colados"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn os_alvos_sao_naves_de_verdade_e_levam_dano() {
+        // Se fossem um tipo à parte, o campo testaria o campo, não o
+        // jogo: dano, escudo e destruição precisam passar pelo mesmo
+        // caminho de um adversário humano.
+        let (mut w, _) = arena_de_treino();
+        let alvo = alvos(&w)[0];
+        let antes = w.ships[&alvo].3.hull_hp + w.ships[&alvo].3.shield_hp;
+
+        let pos = w.ships[&alvo].0;
+        let pid = w.alloc_id();
+        w.projectiles.insert(
+            pid,
+            (
+                pos,
+                Velocity::default(),
+                Projectile {
+                    owner_player_id: 1,
+                    owner_entity: w.player_ships[&1],
+                    damage: 150.0,
+                    ttl_remaining: 2.0,
+                    radius: 2.0,
+                    speed: 100.0,
+                    splash_radius: 0.0,
+                    visual: 0,
+                    charge: 0.0,
+                },
+            ),
+        );
+        w.step(1.0 / 30.0);
+
+        let depois = w.ships[&alvo].3.hull_hp + w.ships[&alvo].3.shield_hp;
+        assert!(depois < antes, "o alvo deveria levar dano: {antes} -> {depois}");
+    }
+
+    #[test]
+    fn os_alvos_aparecem_no_snapshot_como_naves() {
+        // O travamento e a mira do jogador dependem disso.
+        let (mut w, _) = arena_de_treino();
+        w.step(1.0 / 30.0);
+        let snap = build_snapshot(&w);
+        let naves = snap
+            .entities
+            .iter()
+            .filter(|e| e.kind == crate::net::protocol::EntityKind::Ship)
+            .count();
+        // Três alvos + a nave do jogador.
+        assert_eq!(naves, 4);
+    }
+
+    #[test]
+    fn os_alvos_tem_nome_para_o_jogador_saber_qual_e_qual() {
+        let (mut w, _) = arena_de_treino();
+        w.step(1.0 / 30.0);
+        let snap = build_snapshot(&w);
+        let nomes: Vec<String> = snap
+            .entities
+            .iter()
+            .filter_map(|e| e.display_name.clone())
+            .collect();
+        for k in [
+            TrainingKind::Parado,
+            TrainingKind::Corredor,
+            TrainingKind::Cacador,
+        ] {
+            assert!(
+                nomes.iter().any(|n| n == k.label()),
+                "faltou {} em {nomes:?}",
+                k.label()
+            );
+        }
+    }
+
+    #[test]
+    fn o_alvo_fixo_nao_se_move_ao_longo_do_tempo() {
+        let (mut w, _) = arena_de_treino();
+        let fixo = *alvos(&w)
+            .iter()
+            .find(|id| w.ships[id].3.training.as_ref().unwrap().kind == TrainingKind::Parado)
+            .unwrap();
+        let inicial = w.ships[&fixo].0;
+        for _ in 0..(30 * 5) {
+            w.step(1.0 / 30.0);
+        }
+        assert!(dist_sq(w.ships[&fixo].0, inicial).sqrt() < 1.0);
+    }
+
+    #[test]
+    fn o_alvo_movel_se_move_e_informa_velocidade() {
+        // A velocidade informada é o que a mira do jogador antecipa. Se
+        // ficasse zerada, o alvo que existe para treinar antecipação
+        // seria idêntico ao alvo fixo.
+        let (mut w, _) = arena_de_treino();
+        let movel = *alvos(&w)
+            .iter()
+            .find(|id| w.ships[id].3.training.as_ref().unwrap().kind == TrainingKind::Corredor)
+            .unwrap();
+        let inicial = w.ships[&movel].0;
+        let mut maior_vel: f32 = 0.0;
+        for _ in 0..(30 * 4) {
+            w.step(1.0 / 30.0);
+            let v = w.ships[&movel].1;
+            maior_vel = maior_vel.max((v.x * v.x + v.y * v.y + v.z * v.z).sqrt());
+        }
+        assert!(dist_sq(w.ships[&movel].0, inicial).sqrt() > 50.0, "deveria ter se movido");
+        assert!(maior_vel > 20.0, "velocidade informada baixa: {maior_vel}");
+    }
+
+    #[test]
+    fn o_cacador_lanca_torpedo_no_jogador() {
+        // É o que torna as quatro defesas testáveis sem outro humano.
+        let (mut w, _) = arena_de_treino();
+        let mut lancou = false;
+        for _ in 0..(30 * 8) {
+            w.step(1.0 / 30.0);
+            if !w.torpedoes.is_empty() {
+                lancou = true;
+                break;
+            }
+        }
+        assert!(lancou, "o caçador deveria ter lançado um torpedo");
+    }
+
+    #[test]
+    fn o_torpedo_do_cacador_persegue_o_jogador() {
+        let (mut w, _) = arena_de_treino();
+        let eu = w.player_ships[&1];
+        for _ in 0..(30 * 8) {
+            w.step(1.0 / 30.0);
+            if let Some((_, t)) = w.torpedoes.values().next() {
+                assert_eq!(t.target, Some(eu), "deveria estar travado em mim");
+                return;
+            }
+        }
+        panic!("nenhum torpedo foi lançado");
+    }
+
+    #[test]
+    fn sem_pedir_treino_nao_ha_alvos() {
+        // O campo de provas é opcional: quem entra na arena normal não
+        // deve encontrar alvos de treino no caminho.
+        let mut w = World::new();
+        w.spawn_player_ship(1, "piloto".into());
+        assert!(alvos(&w).is_empty());
+    }
+
+    #[test]
+    fn os_alvos_nao_sao_afetados_por_gravidade() {
+        // Alvo de treino tem que ser PREVISÍVEL. Sujeito a gravidade e
+        // arrasto, ele sairia de curso e deixaria de medir o que se
+        // quer medir.
+        let (mut w, _) = arena_de_treino();
+        let fixo = *alvos(&w)
+            .iter()
+            .find(|id| w.ships[id].3.training.as_ref().unwrap().kind == TrainingKind::Parado)
+            .unwrap();
+        let inicial = w.ships[&fixo].0;
+        for _ in 0..(30 * 20) {
+            w.step(1.0 / 30.0);
+        }
+        assert!(
+            dist_sq(w.ships[&fixo].0, inicial).sqrt() < 1.0,
+            "o alvo fixo derivou"
+        );
     }
 }

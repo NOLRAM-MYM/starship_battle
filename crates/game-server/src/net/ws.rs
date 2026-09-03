@@ -166,7 +166,14 @@ async fn handle_conn(
                             break Err(e);
                         }
                     }
-                    ClientMsg::Join { name, protocol, loadout, skills, consumables } => {
+                    ClientMsg::Join {
+                        name,
+                        protocol,
+                        loadout,
+                        skills,
+                        consumables,
+                        practice,
+                    } => {
                         if protocol != PROTOCOL_VERSION {
                             // Cliente desatualizado: avisa e encerra, em vez
                             // de deixá-lo interpretar bytes com outro layout.
@@ -192,6 +199,7 @@ async fn handle_conn(
                             loadout,
                             skills,
                             consumables,
+                            practice,
                         });
                     }
                     ClientMsg::Input {

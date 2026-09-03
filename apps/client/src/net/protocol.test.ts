@@ -20,7 +20,7 @@ describe('protocol roundtrip', () => {
   it('encode Join then decode bytes matches expected layout', () => {
     const msg: ClientMsg = {
       type: 'Join',
-      payload: { name: 'alice', protocol: PROTOCOL_VERSION, loadout: [], skills: [], consumables: [] },
+      payload: { name: 'alice', protocol: PROTOCOL_VERSION, loadout: [], skills: [], consumables: [], practice: false },
     };
     const bytes = encodeClientMsg(msg);
     // Esperado:
@@ -31,7 +31,8 @@ describe('protocol roundtrip', () => {
     // v5: + u64 com o comprimento do Vec<String> do loadout (vazio aqui).
     // v8: + u64 com o comprimento do Vec<String> das skills.
     // v9: + u64 com o comprimento do Vec<ConsumableSlot>.
-    expect(bytes.byteLength).toBe(4 + 8 + 5 + 2 + 8 + 8 + 8);
+    // v11: + u8 do campo de provas.
+    expect(bytes.byteLength).toBe(4 + 8 + 5 + 2 + 8 + 8 + 8 + 1);
 
     // Confere os primeiros bytes (variant + len)
     const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

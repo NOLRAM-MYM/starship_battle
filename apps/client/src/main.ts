@@ -196,7 +196,11 @@ async function bootstrap(): Promise<void> {
 
   let currentState: AppState = 'LOGIN';
 
-  function setState(state: AppState, loadoutId?: number | string): void {
+  function setState(
+    state: AppState,
+    loadoutId?: number | string,
+    praticar = false,
+  ): void {
     currentState = state;
     // O canvas fica sempre visível: LOGIN e HANGAR mostram a doca 3D.
     canvas!.style.display = 'block';
@@ -213,7 +217,7 @@ async function bootstrap(): Promise<void> {
       builder.close();
       shop.close();
       keybinds.close();
-      startPlay(loadoutId).catch((err) => console.error('[play] failed', err));
+      startPlay(loadoutId, praticar).catch((err) => console.error('[play] failed', err));
     }
   }
 
@@ -223,7 +227,7 @@ async function bootstrap(): Promise<void> {
   });
 
   hangarScreen.setCallbacks(
-    (loadoutId) => setState('PLAY', loadoutId),
+    (loadoutId, practice) => setState('PLAY', loadoutId, practice),
     () => {
       // Abre o estaleiro já com o loadout selecionado carregado, para
       // que "editar" não signifique começar do zero.
@@ -294,7 +298,12 @@ async function bootstrap(): Promise<void> {
     setState('HANGAR');
   }
 
-  async function startPlay(loadoutId?: number | string): Promise<void> {
+  /**
+   * `practice` entra no campo de provas: o servidor cria alvos de treino
+   * ao redor da nave. Mesma arena, mesmas regras — só com adversários
+   * previsíveis para conferir mira, torpedo e defesas.
+   */
+  async function startPlay(loadoutId?: number | string, practice = false): Promise<void> {
     if (playStarted) return;
     playStarted = true;
 
@@ -480,6 +489,7 @@ async function bootstrap(): Promise<void> {
       // Só os ids, em ordem de slot: o servidor resolve os números.
       loadout: slots.map((sl) => sl.templateId),
       skills: skillsDaConta,
+      practice,
       consumables: cintoEquipado.map((c) => ({ templateId: c.templateId, charges: c.charges })),
       onStatus: (s) => console.info(`[net] status=${s}`),
     });
