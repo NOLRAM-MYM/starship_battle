@@ -230,13 +230,19 @@
 /* ---------- Retículo central ---------- */
 .hud-reticle {
   position: absolute;
-  top: 50%;
-  left: 50%;
+  /* Ancorado em 0,0 e movido por `transform`: a posição vem do jogo, e
+     não de uma porcentagem fixa. O centro da tela é onde a NAVE está —
+     a linha de tiro sai do nariz e vai para outro lugar. */
+  top: 0;
+  left: 0;
   width: 26px;
   height: 26px;
   margin: -13px 0 0 -13px;
-  opacity: 0.55;
+  opacity: 0;
+  transition: opacity 120ms var(--ease);
 }
+/* Só aparece quando o jogo informa onde a arma aponta. */
+.hud-reticle.live { opacity: 0.7; }
 .hud-reticle::before,
 .hud-reticle::after {
   content: '';

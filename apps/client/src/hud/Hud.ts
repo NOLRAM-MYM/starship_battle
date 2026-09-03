@@ -84,6 +84,15 @@ export interface HudState {
    */
   aim: AimHudState | null;
   /**
+   * Onde os canhões apontam, em pixels, ou `null` se atrás da câmera.
+   *
+   * O retículo era fixo no CENTRO da tela — mas a câmera é de
+   * perseguição, atrás e acima da nave, olhando para ela: o centro é
+   * onde a NAVE está, não a linha de tiro. Os dois nunca coincidiam, e
+   * por isso não havia como centralizar a mira.
+   */
+  gun: { x: number; y: number } | null;
+  /**
    * Torpedos perseguindo o jogador AGORA.
    *
    * Sem este aviso, um torpedo teleguiado seria uma morte sem
@@ -148,6 +157,7 @@ export function createHudState(): HudState {
     targetName: null,
     consumables: [],
     aim: null,
+    gun: null,
     incomingTorpedoes: 0,
     skills: [
       { id: 'Dash', cooldownEnd: 0, cooldownTotal: 5000 },
@@ -480,9 +490,13 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
       aimMarker.className = 'hud-aim';
     }
 
-    // O retículo fixo acompanha: quando a linha de tiro casa com o
-    // ponto de impacto, ele acende. É o sinal que o olho pega sem
-    // desviar do centro da tela.
+    // ---- Retículo (linha de tiro) ----
+    if (state.gun) {
+      reticle.classList.add('live');
+      reticle.style.transform = `translate(${state.gun.x.toFixed(1)}px, ${state.gun.y.toFixed(1)}px)`;
+    } else {
+      reticle.classList.remove('live');
+    }
     reticle.classList.toggle('on-target', state.aim?.onTarget === true);
 
     // ---- Alerta de torpedo ----

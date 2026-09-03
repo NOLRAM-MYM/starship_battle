@@ -703,10 +703,16 @@ async function bootstrap(): Promise<void> {
     // errada.
     let constanteG = 0.55;
     let gravityViz: GravityVizHandle | null = null;
-    const forward = new THREE.Vector3(0, 0, -1);
+    // A frente da nave é +Z, igual ao servidor (`fn forward` em
+    // world.rs devolve (0,0,1) para o quaternion identidade). Isto
+    // estava como -Z, ou seja, apontava para TRÁS: a mira automática
+    // escolhia contatos atrás do jogador e o ponto de impacto calculado
+    // para eles caía sempre fora da tela.
+    const forward = new THREE.Vector3(0, 0, 1);
     // Reaproveitado a cada quadro para projetar o ponto de mira: alocar
     // um Vector3 por quadro pressiona o coletor à toa.
     const miraVec = new THREE.Vector3();
+    const canhaoVec = new THREE.Vector3();
     const camDir = new THREE.Vector3();
     const paraMira = new THREE.Vector3();
     const shipPos = new THREE.Vector3();
@@ -835,7 +841,7 @@ async function bootstrap(): Promise<void> {
           remoteRenderer.setLocalTeam(m.team);
           shipQuat.set(m.quat[0], m.quat[1], m.quat[2], m.quat[3]);
           shipVel.set(m.vel[0], m.vel[1], m.vel[2]);
-          forward.set(0, 0, -1).applyQuaternion(shipQuat);
+          forward.set(0, 0, 1).applyQuaternion(shipQuat);
           if (m.hpRatio !== null) hudState.hp = Math.round(m.hpRatio * hudState.hpMax);
         }
 
@@ -869,6 +875,34 @@ async function bootstrap(): Promise<void> {
           celestialBodies,
         );
 
+
+        // --- Linha de tiro ---
+        //
+        // O retículo era um elemento fixo no CENTRO da tela. Só que a
+        // câmera é de perseguição, atrás e ACIMA da nave, olhando para
+        // ela: o centro da tela é onde a NAVE está, não para onde os
+        // canhões apontam. Os dois nunca coincidiam, e por isso não
+        // havia como "centralizar a mira" — não era perícia faltando,
+        // a referência é que era falsa.
+        //
+        // Agora o retículo é projetado do ponto que a arma realmente
+        // alcança, à distância do alvo (harmonização, como nos caças).
+        const alcanceMira = hudState.targetDistance > 0 ? hudState.targetDistance : 600;
+        canhaoVec
+          .copy(forward)
+          .multiplyScalar(alcanceMira)
+          .add(shipPos);
+        renderer.camera.updateMatrixWorld();
+        camDir.set(0, 0, -1).applyQuaternion(renderer.camera.quaternion);
+        paraMira.copy(canhaoVec).sub(renderer.camera.position);
+        const canhaoAFrente = paraMira.dot(camDir) > 0;
+        canhaoVec.project(renderer.camera);
+        hudState.gun = canhaoAFrente
+          ? {
+              x: (canhaoVec.x * 0.5 + 0.5) * renderer.three.domElement.clientWidth,
+              y: (-canhaoVec.y * 0.5 + 0.5) * renderer.three.domElement.clientHeight,
+            }
+          : null;
 
       // --- Torpedos perseguindo o jogador ---
       //
@@ -997,12 +1031,14 @@ async function bootstrap(): Promise<void> {
             const ny = naTela ? miraVec.y : Math.max(-m, Math.min(m, miraVec.y));
             const px = (nx * 0.5 + 0.5) * larg;
             const py = (-ny * 0.5 + 0.5) * alt;
-            // "Na mira" = o ponto de impacto está dentro do retículo
-            // fixo, que fica no centro da tela. O raio é proporcional à
-            // altura para valer igual em qualquer resolução.
+            // "Na mira" = o ponto de impacto caiu sobre a LINHA DE
+            // TIRO. Comparar com o centro da tela, como antes, media
+            // contra uma referência falsa — o centro é onde a nave
+            // está, não para onde os canhões apontam.
             const raioAcerto = alt * 0.035;
-            const dx = px - larg / 2;
-            const dy = py - alt / 2;
+            const gun = hudState.gun;
+            const dx = gun ? px - gun.x : Number.POSITIVE_INFINITY;
+            const dy = gun ? py - gun.y : 0;
             hudState.aim = {
               x: px,
               y: py,

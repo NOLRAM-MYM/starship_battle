@@ -14,6 +14,8 @@
  * de montada, então uma regressão volta a falhar aqui.
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three/webgpu';
 import { createShipMesh } from '../src/render/ShipMesh.js';
@@ -94,5 +96,48 @@ describe('orientação da nave (convenção +Z do servidor)', () => {
     expect(bocais.length).toBeGreaterThan(0);
     for (const p of bocais) expect(p.z).toBeLessThan(0);
     ship.dispose();
+  });
+});
+
+describe('direção da frente casa com o servidor', () => {
+  // O cliente calcula a frente da nave por conta própria, para a bússola
+  // e para a mira automática. Estava como -Z enquanto o servidor usa +Z:
+  // o vetor apontava para TRÁS, a mira automática escolhia contatos
+  // atrás do jogador, e o ponto de impacto calculado para eles caía
+  // sempre fora da tela. Nada quebrava — só não dava para acertar nada.
+  //
+  // Fixture gerada por `cargo test -p game-server --lib forward_fixture`.
+  const FIXTURE = join(process.cwd(), 'src/net/__fixtures__/forward.json');
+
+  /** Mesmo cálculo que `main.ts` faz por quadro. */
+  function frenteDoCliente(q: [number, number, number, number]): THREE.Vector3 {
+    return new THREE.Vector3(0, 0, 1).applyQuaternion(
+      new THREE.Quaternion(q[0], q[1], q[2], q[3]),
+    );
+  }
+
+  it('a fixture existe', () => {
+    expect(existsSync(FIXTURE), 'gere com `cargo test -p game-server --lib forward_fixture`')
+      .toBe(true);
+  });
+
+  it('todos os casos batem com o servidor', () => {
+    const casos: Record<
+      string,
+      { quat: [number, number, number, number]; forward: [number, number, number] }
+    > = JSON.parse(readFileSync(FIXTURE, 'utf8'));
+
+    for (const [nome, esperado] of Object.entries(casos)) {
+      const f = frenteDoCliente(esperado.quat);
+      expect(f.x, `${nome}: x`).toBeCloseTo(esperado.forward[0], 4);
+      expect(f.y, `${nome}: y`).toBeCloseTo(esperado.forward[1], 4);
+      expect(f.z, `${nome}: z`).toBeCloseTo(esperado.forward[2], 4);
+    }
+  });
+
+  it('em repouso a frente é +Z, não -Z', () => {
+    // O caso que estava errado, dito de forma direta.
+    const f = frenteDoCliente([0, 0, 0, 1]);
+    expect(f.z).toBeCloseTo(1, 5);
   });
 });

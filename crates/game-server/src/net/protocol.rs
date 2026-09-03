@@ -919,3 +919,49 @@ mod aim_fixture {
         f.write_all(json.as_bytes()).unwrap();
     }
 }
+
+/// Fixture da direção "frente" para o cliente.
+///
+/// O cliente calcula a frente da nave por conta própria, para a bússola
+/// e para a mira automática. Estava como -Z enquanto o servidor usa +Z:
+/// o vetor apontava para TRÁS, a mira automática escolhia contatos atrás
+/// do jogador, e o ponto de impacto calculado para eles caía sempre fora
+/// da tela. Nada quebrava — só não dava para acertar nada.
+#[cfg(test)]
+mod forward_fixture {
+    use std::io::Write;
+
+    /// Mesma fórmula de `world::forward`.
+    fn frente(q: [f32; 4]) -> [f32; 3] {
+        let (x, y, z, w) = (q[0], q[1], q[2], q[3]);
+        [
+            2.0 * (x * z + w * y),
+            2.0 * (y * z - w * x),
+            1.0 - 2.0 * (x * x + y * y),
+        ]
+    }
+
+    #[test]
+    fn escreve_direcoes_de_frente_para_o_cliente() {
+        // Identidade e três rotações de 90° em torno de cada eixo.
+        let casos: Vec<(&str, [f32; 4])> = vec![
+            ("identidade", [0.0, 0.0, 0.0, 1.0]),
+            ("yaw90", [0.0, 0.707_106_77, 0.0, 0.707_106_77]),
+            ("pitch90", [0.707_106_77, 0.0, 0.0, 0.707_106_77]),
+            ("roll90", [0.0, 0.0, 0.707_106_77, 0.707_106_77]),
+        ];
+        let mut linhas = Vec::new();
+        for (nome, q) in &casos {
+            let f = frente(*q);
+            linhas.push(format!(
+                "  \"{}\": {{ \"quat\": [{},{},{},{}], \"forward\": [{},{},{}] }}",
+                nome, q[0], q[1], q[2], q[3], f[0], f[1], f[2]
+            ));
+        }
+        let json = format!("{{\n{}\n}}\n", linhas.join(",\n"));
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/client/src/net/__fixtures__");
+        std::fs::create_dir_all(dir).unwrap();
+        let mut f = std::fs::File::create(format!("{dir}/forward.json")).unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+    }
+}
