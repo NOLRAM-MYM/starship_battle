@@ -16,6 +16,15 @@
  */
 
 import {
+  detectFamily,
+  familyLabel,
+  LIMIAR_GATILHO,
+  readAxes,
+  readButtons,
+  type PadInfo,
+  type PadPrevState,
+} from './gamepad';
+import {
   buildReverseMap,
   DEFAULT_KEYMAP,
   type GameAction,
@@ -78,6 +87,10 @@ export interface InputController {
   onAction(action: GameAction, cb: () => void): void;
   attach(target?: HTMLElement | Window): void;
   detach(): void;
+  /** Controle conectado, ou `null`. Para a interface anunciar. */
+  gamepad(): PadInfo | null;
+  /** Avisa quando um controle conecta ou desconecta. */
+  onGamepadChange(cb: (info: PadInfo | null) => void): void;
 }
 
 const SKILL_OF: Partial<Record<GameAction, 'Dash' | 'Emp' | 'Repair'>> = {
@@ -159,6 +172,38 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
     pendingDecoys = false;
   }
 
+  // --- Controle ---
+  //
+  // O navegador NÃO pareia nada: o Bluetooth acontece no sistema. O que
+  // chega aqui é a Gamepad API, que entrega qualquer controle já
+  // conectado, com ou sem fio, sem diferença.
+  let padInfo: PadInfo | null = null;
+  const padPrev: PadPrevState = new Set<number>();
+  const padListeners: Array<(info: PadInfo | null) => void> = [];
+
+  /** Primeiro controle realmente conectado. */
+  function lerPad(): Gamepad | null {
+    if (typeof navigator === 'undefined' || !navigator.getGamepads) return null;
+    for (const g of navigator.getGamepads()) {
+      if (g && g.connected) return g;
+    }
+    return null;
+  }
+
+  function atualizarInfo(g: Gamepad | null): void {
+    const novo: PadInfo | null = g
+      ? {
+          index: g.index,
+          id: g.id,
+          family: detectFamily(g.id),
+          label: familyLabel(detectFamily(g.id)),
+        }
+      : null;
+    const mudou = (padInfo?.index ?? -1) !== (novo?.index ?? -1);
+    padInfo = novo;
+    if (mudou) for (const cb of padListeners) cb(novo);
+  }
+
   let attached: { target: Window } | null = null;
 
   function attach(target: HTMLElement | Window = window): void {
@@ -188,6 +233,31 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
 
   return {
     read(): InputState {
+      const g = lerPad();
+      atualizarInfo(g);
+      const pad = g ? readAxes(g) : null;
+      const padBtn = g ? readButtons(g, padPrev) : null;
+
+      // O gatilho do controle também carrega o tiro, igual ao teclado.
+      if (padBtn) {
+        if (padBtn.fireHeld && fireHeldSince === null) {
+          fireHeldSince = performance.now();
+        }
+        if (padBtn.fire && fireHeldSince !== null) {
+          pendingCharge = Math.max(0, (performance.now() - fireHeldSince) / 1000);
+          pendingFire = true;
+          fireHeldSince = null;
+        }
+        if (padBtn.defend) pendingDefend = true;
+        if (padBtn.skill) pendingSkill = padBtn.skill;
+        if (padBtn.useConsumable !== null) pendingConsumable = padBtn.useConsumable;
+        if (padBtn.launchTorpedo) pendingTorpedo = true;
+        if (padBtn.deployDecoys) pendingDecoys = true;
+        if (padBtn.cycleTarget) emit('cycleTarget');
+        if (padBtn.toHangar) emit('toHangar');
+        if (padBtn.toggleGravityLines) emit('toggleGravityLines');
+      }
+
       const fire = pendingFire;
       pendingFire = false;
       const fireCharge = pendingCharge;
@@ -203,13 +273,19 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
       const deployDecoys = pendingDecoys;
       pendingDecoys = false;
 
+      // Teclado e controle SOMAM, com saturação. Assim os dois valem ao
+      // mesmo tempo — dá para pilotar na alavanca e usar uma tecla sem
+      // que um cancele o outro — e nenhum dos dois precisa "ganhar".
+      const misturar = (tecla: number, analogico: number): number =>
+        Math.max(-1, Math.min(1, tecla + analogico));
+
       return {
-        steer: axis('yawLeft', 'yawRight'),
+        steer: misturar(axis('yawLeft', 'yawRight'), pad?.steer ?? 0),
         // W deve levantar o nariz. No referencial do servidor, pitch
         // positivo sobe, então `pitchDown -> -1` e `pitchUp -> +1`.
-        pitch: axis('pitchDown', 'pitchUp'),
-        roll: axis('rollLeft', 'rollRight'),
-        thrust: held.has('thrust') ? 1 : 0,
+        pitch: misturar(axis('pitchDown', 'pitchUp'), pad?.pitch ?? 0),
+        roll: misturar(axis('rollLeft', 'rollRight'), pad?.roll ?? 0),
+        thrust: Math.max(held.has('thrust') ? 1 : 0, pad?.thrust ?? 0),
         fire,
         fireCharge,
         defend,
@@ -217,7 +293,7 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
         useConsumable,
         launchTorpedo,
         deployDecoys,
-        fineControl: held.has('fineControl'),
+        fineControl: held.has('fineControl') || (pad?.fine ?? 0) >= LIMIAR_GATILHO,
       };
     },
 
@@ -249,6 +325,16 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
       const arr = listeners.get(action) ?? [];
       arr.push(cb);
       listeners.set(action, arr);
+    },
+
+    gamepad(): PadInfo | null {
+      return padInfo;
+    },
+
+    onGamepadChange(cb): void {
+      padListeners.push(cb);
+      // Avisa já, caso o controle esteja conectado desde antes.
+      cb(padInfo);
     },
 
     attach,

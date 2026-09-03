@@ -11,6 +11,12 @@ import {
   type GameAction,
   type Keymap,
 } from '../input/keybindings';
+import {
+  detectFamily,
+  familyLabel,
+  padBindings,
+  type PadFamily,
+} from '../input/gamepad';
 import './KeybindScreen.css';
 
 /**
@@ -32,6 +38,10 @@ export interface KeybindScreenOptions {
 }
 
 export class KeybindScreen {
+  /** Família do controle detectado, para os rótulos dos botões. */
+  private padFamily: PadFamily = 'generic';
+  private padConectado = false;
+
   private root: HTMLElement;
   private opts: KeybindScreenOptions = {};
   private map: Keymap;
@@ -67,6 +77,9 @@ export class KeybindScreen {
     this.visible = true;
     this.root.style.display = 'block';
     this.notice = null;
+    // O jogador costuma conectar o controle justamente ao vir conferir
+    // os comandos: reler aqui é o que faz a tela mostrar a verdade.
+    this.detectarPad();
     this.render();
     void this.refreshLabels();
   }
@@ -154,7 +167,29 @@ export class KeybindScreen {
     return this.labels.get(code) ?? keyLabel(code);
   }
 
+  /**
+   * Relê o controle conectado.
+   *
+   * Consultado ao ABRIR a tela, e não uma vez só na construção: o
+   * jogador costuma conectar o controle justamente quando vem conferir
+   * os comandos, e uma leitura única mostraria "nenhum detectado" para
+   * sempre.
+   */
+  private detectarPad(): void {
+    this.padConectado = false;
+    this.padFamily = 'generic';
+    if (typeof navigator === 'undefined' || !navigator.getGamepads) return;
+    for (const g of navigator.getGamepads()) {
+      if (g && g.connected) {
+        this.padConectado = true;
+        this.padFamily = detectFamily(g.id);
+        return;
+      }
+    }
+  }
+
   private render(): void {
+    const padFamilyLabel = familyLabel(this.padFamily);
     const grupos = ['Pilotagem', 'Combate', 'Interface'] as const;
     const semTecla = ACTIONS.filter((a) => !this.map[a.action]).length;
 
@@ -174,6 +209,30 @@ export class KeybindScreen {
           funciona igual em QWERTY, AZERTY e ABNT2. Clique numa ação e
           pressione a tecla que quiser.
         </p>
+
+        <section class="kb-pad">
+          <h3 class="kb-pad-title">
+            Controle ${escapeHtml(padFamilyLabel)}
+            <span class="kb-pad-status ${this.padConectado ? 'on' : ''}">
+              ${this.padConectado ? 'conectado' : 'nenhum detectado'}
+            </span>
+          </h3>
+          <p class="kb-help">
+            Controles de PlayStation, Nintendo e Xbox funcionam assim que o
+            <b>sistema</b> os conecta — por Bluetooth ou cabo, sem diferença.
+            O navegador não faz o emparelhamento: pareie pelo sistema e o
+            jogo reconhece sozinho. Modelos que não conhecemos funcionam
+            igual, só com os nomes genéricos nos botões.
+          </p>
+          <div class="kb-pad-grid">
+            ${padBindings(this.padFamily)
+              .map(
+                (b) =>
+                  `<div class="kb-pad-row"><span>${escapeHtml(b.acao)}</span><b>${escapeHtml(b.botao)}</b></div>`,
+              )
+              .join('')}
+          </div>
+        </section>
 
         ${
           this.notice

@@ -648,6 +648,20 @@ async function bootstrap(): Promise<void> {
       lockedTarget: () => lockedTargetId,
     });
 
+    // Controle conectado: avisa e diz qual é.
+    //
+    // O navegador não pareia nada — o Bluetooth acontece no sistema. O
+    // que dá para fazer é reconhecer o que já está conectado, e é isso
+    // que o aviso confirma para o jogador, que senão fica testando
+    // botões sem saber se o jogo o enxergou.
+    input.onGamepadChange((info) => {
+      if (info) {
+        hud.toast(`Controle ${info.label} conectado`, 'good');
+      } else {
+        hud.toast('Controle desconectado', 'bad');
+      }
+    });
+
     // Tecla de saída, além do botão do HUD.
     input.onAction('toHangar', () => returnToHangar());
     input.onAction('toggleGravityLines', () => {

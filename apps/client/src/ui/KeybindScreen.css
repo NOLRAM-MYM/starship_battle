@@ -141,3 +141,43 @@
   .kb-frame { width: 100vw; height: 100vh; max-height: none; border-radius: 0; border: none; }
   .kb-key { min-width: 92px; }
 }
+
+/* ---------- Seção de controle ---------- */
+.kb-pad {
+  margin: 14px 0 6px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.kb-pad-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+/* O estado fica ao lado do título e não numa linha própria: é a primeira
+   coisa que o jogador procura ao abrir esta tela. */
+.kb-pad-status {
+  margin-left: 8px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.45);
+}
+.kb-pad-status.on { color: var(--accent, #4ec9ff); }
+
+.kb-pad-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 3px 18px;
+  margin-top: 8px;
+}
+.kb-pad-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.kb-pad-row b { color: var(--accent, #4ec9ff); white-space: nowrap; }
