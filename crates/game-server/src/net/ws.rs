@@ -213,6 +213,7 @@ async fn handle_conn(
                         use_consumable,
                         launch_torpedo,
                         deploy_decoys,
+                        fine_control,
                     } => {
                         state.enqueue(PlayerCommand::Input {
                             player_id,
@@ -226,6 +227,7 @@ async fn handle_conn(
                             use_consumable,
                             launch_torpedo,
                             deploy_decoys,
+                            fine_control,
                         });
                     }
                 }

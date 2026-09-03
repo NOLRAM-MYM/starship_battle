@@ -13,6 +13,7 @@
 //! - `Parado`    — mira em repouso, dano por arma, tiro carregado.
 //! - `Corredor`  — antecipação: cruza na lateral, que é o caso difícil.
 //! - `Cacador`   — as quatro defesas: aproxima e lança torpedos.
+//! - `Aliado`    — amigo/inimigo: voa junto e NÃO pode ser ferido.
 
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +26,12 @@ pub enum TrainingKind {
     Corredor,
     /// Aproxima-se e lança torpedos.
     Cacador,
+    /// Nave ALIADA, voando em formação.
+    ///
+    /// Existe para a distinção amigo/inimigo ser observável: sem um
+    /// aliado em campo, "não atire nele" e "a cor é outra" seriam
+    /// afirmações sem como verificar.
+    Aliado,
 }
 
 impl TrainingKind {
@@ -34,6 +41,7 @@ impl TrainingKind {
             TrainingKind::Parado => "Alvo Fixo",
             TrainingKind::Corredor => "Alvo Móvel",
             TrainingKind::Cacador => "Caçador",
+            TrainingKind::Aliado => "Ala",
         }
     }
 
@@ -47,6 +55,10 @@ impl TrainingKind {
             TrainingKind::Parado => 260.0,
             TrainingKind::Corredor => 520.0,
             TrainingKind::Cacador => 400.0,
+            // Perto: um aliado voa em formação, não do outro lado do
+            // setor. E de perto o risco de acertá-lo por engano é real,
+            // que é justamente o que o fogo amigo desligado protege.
+            TrainingKind::Aliado => 120.0,
         }
     }
 
@@ -56,6 +68,7 @@ impl TrainingKind {
             TrainingKind::Parado => 900.0,
             TrainingKind::Corredor => 700.0,
             TrainingKind::Cacador => 1400.0,
+            TrainingKind::Aliado => 700.0,
         }
     }
 }
@@ -147,6 +160,14 @@ impl TrainingDummy {
                 }
             }
 
+            // O ala acompanha, sem atacar: o exercício é distingui-lo de
+            // um inimigo, não lutar com ele.
+            TrainingKind::Aliado => TrainingAction {
+                position: self.anchor,
+                velocity: [0.0, 0.0, 0.0],
+                launch_torpedo: false,
+            },
+
             TrainingKind::Cacador => {
                 // Mantém distância de tiro em vez de colar no jogador:
                 // colado, ele viraria um alvo trivial e os torpedos não
@@ -199,7 +220,15 @@ pub fn training_range() -> Vec<TrainingKind> {
         TrainingKind::Parado,
         TrainingKind::Corredor,
         TrainingKind::Cacador,
+        TrainingKind::Aliado,
     ]
+}
+
+impl TrainingKind {
+    /// `true` quando o alvo entra no time do jogador.
+    pub fn is_ally(self) -> bool {
+        matches!(self, TrainingKind::Aliado)
+    }
 }
 
 #[cfg(test)]
@@ -319,6 +348,24 @@ mod tests {
             (200.0..600.0).contains(&dist),
             "deveria estabilizar a distância de tiro, ficou em {dist}"
         );
+    }
+
+    #[test]
+    fn o_ala_e_o_unico_aliado() {
+        // Sem um aliado em campo, "não atire nele" e "a cor é outra"
+        // seriam afirmações sem como verificar.
+        let aliados: Vec<TrainingKind> =
+            training_range().into_iter().filter(|k| k.is_ally()).collect();
+        assert_eq!(aliados, vec![TrainingKind::Aliado]);
+    }
+
+    #[test]
+    fn o_ala_nasce_perto_e_nao_ataca() {
+        assert!(TrainingKind::Aliado.spawn_distance() < TrainingKind::Parado.spawn_distance());
+        let mut d = TrainingDummy::new(TrainingKind::Aliado, [0.0, 0.0, 120.0]);
+        for _ in 0..(30 * 20) {
+            assert!(!d.step(1.0 / 30.0, [0.0; 3]).launch_torpedo);
+        }
     }
 
     #[test]

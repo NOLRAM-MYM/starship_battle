@@ -52,6 +52,21 @@ pub struct Ship {
     pub hull_max: f32,
     pub shield_hp: f32,
     pub shield_max: f32,
+    /// Velocidade angular ATUAL de cada eixo (pitch, yaw, roll), rad/s.
+    ///
+    /// Existe porque a rotação deixou de ser instantânea: a entrada
+    /// pede uma taxa e a nave acelera até ela. Sem guardar o estado, não
+    /// haveria nem inércia nem amortecimento — a nave só teria três
+    /// estados por eixo, que é o que a tornava impossível de enquadrar.
+    pub ang_rate: [f32; 3],
+    /// Modo de precisão: reduz a taxa máxima para mira fina.
+    pub fine_control: bool,
+    /// Time. Duas naves com o MESMO time não-zero são aliadas.
+    ///
+    /// O padrão de um jogador é o próprio `player_id`, o que dá combate
+    /// livre sem nenhuma configuração. `TEAM_NONE` (0) é hostil a todos,
+    /// e é o que NPCs e alvos de treino usam.
+    pub team: sim_core::ship::team::TeamId,
     /// Comportamento de alvo de treino, se esta nave for um.
     ///
     /// `None` para naves de jogador. Um alvo de treino é uma nave comum
@@ -111,6 +126,9 @@ impl Default for Ship {
     fn default() -> Self {
         Self {
             owner_player_id: 0,
+            ang_rate: [0.0; 3],
+            fine_control: false,
+            team: sim_core::ship::team::TEAM_NONE,
             name: String::new(),
             thrust_input: 0.0,
             steer_input: 0.0,
@@ -315,6 +333,43 @@ impl World {
         self.apply_loadout_and_skills(player_id, template_ids, &[]);
     }
 
+    /// Duas naves são aliadas?
+    ///
+    /// Regra única, num lugar só. Antes a decisão de fogo amigo estava
+    /// escrita inline no laço de projéteis e comparava apenas
+    /// `owner_player_id` e `parties` — os torpedos, que vieram depois,
+    /// reimplementaram uma versão mais pobre e ignoravam os grupos. Com
+    /// a regra espalhada, bastava uma arma nova esquecer dela para o
+    /// fogo amigo voltar em silêncio.
+    ///
+    /// São aliados quem está no mesmo TIME (o padrão é o próprio
+    /// `player_id`, o que dá combate livre) ou no mesmo grupo.
+    pub fn sao_aliados(&self, a: EntityId, b: EntityId) -> bool {
+        use sim_core::ship::team::{relation, Relation};
+        if a == b {
+            return true;
+        }
+        let (Some((_, _, _, sa)), Some((_, _, _, sb))) = (self.ships.get(&a), self.ships.get(&b))
+        else {
+            return false;
+        };
+        if relation(sa.team, sb.team) == Relation::Friendly {
+            return true;
+        }
+        // Grupos: dois jogadores no mesmo party não se ferem, mesmo com
+        // times distintos.
+        if sa.owner_player_id == 0 || sb.owner_player_id == 0 {
+            return false;
+        }
+        match (
+            self.parties.get(&sa.owner_player_id),
+            self.parties.get(&sb.owner_player_id),
+        ) {
+            (Some(pa), Some(pb)) => pa == pb,
+            _ => false,
+        }
+    }
+
     /// Equipa o cinto de consumíveis da nave do jogador.
     ///
     /// Separado do loadout porque as cargas vêm do INVENTÁRIO da conta,
@@ -389,6 +444,12 @@ impl World {
 
         let ship = Ship {
             owner_player_id: player_id,
+            ang_rate: [0.0; 3],
+            fine_control: false,
+            // Cada jogador no próprio time: combate livre por padrão,
+            // sem nenhuma configuração. Um sistema de esquadrões só
+            // precisa passar a atribuir o mesmo número a vários.
+            team: player_id,
             name,
             thrust_input: 0.0,
             steer_input: 0.0,
@@ -664,18 +725,16 @@ impl World {
                 let dist_sq = point_segment_dist_sq(*sp, *p0, *p1);
                 let r = pr + sr;
                 if dist_sq < r * r {
-                    let proj_owner = self.projectiles.get(proj_id).map(|(_, _, p)| p.owner_player_id).unwrap_or(0);
-                    let mut can_damage = true;
-                    
-                    if proj_owner != 0 && *ship_owner != 0 {
-                        if proj_owner == *ship_owner {
-                            can_damage = false; // No self damage
-                        } else if let (Some(party_a), Some(party_b)) = (self.parties.get(&proj_owner), self.parties.get(ship_owner)) {
-                            if party_a == party_b {
-                                can_damage = false; // Friendly fire prevented
-                            }
-                        }
-                    }
+                    let proj_owner = self
+                        .projectiles
+                        .get(proj_id)
+                        .map(|(_, _, p)| p.owner_player_id)
+                        .unwrap_or(0);
+                    // Uma regra só, em `sao_aliados`: time igual OU
+                    // mesmo grupo. Antes a decisão vivia aqui inline e
+                    // os torpedos, que vieram depois, reimplementaram
+                    // uma versão mais pobre que ignorava os grupos.
+                    let can_damage = !self.sao_aliados(*atirador, *ship_id);
 
                     if !can_damage {
                         // Atravessa aliados e o próprio atirador em vez
@@ -826,6 +885,7 @@ impl World {
         fire_charge: f32,
         skill: Option<ActiveSkill>,
         use_consumable: Option<u8>,
+        fine_control: bool,
     ) {
         // Lookup direto pelo índice, em vez de varrer todas as naves.
         let Some(&id) = self.player_ships.get(&player_id) else {
@@ -840,6 +900,7 @@ impl World {
         ship.pitch_input = pitch.clamp(-1.0, 1.0);
         ship.roll_input = roll.clamp(-1.0, 1.0);
         ship.thrust_input = thrust.clamp(0.0, 1.0);
+        ship.fine_control = fine_control;
         if fire {
             ship.pending_fire = true;
             // Guarda o maior valor até o disparo sair: se dois pacotes
@@ -980,7 +1041,7 @@ impl World {
         // Física de naves.
         let ship_ids: Vec<EntityId> = self.ships.keys().copied().collect();
         for id in ship_ids {
-            let (pos, vel, rot, ship) = self.ships[&id].clone();
+            let (pos, vel, rot, mut ship) = self.ships[&id].clone();
             
             // Em dobra o empuxo é multiplicado; fora dela, normal.
             // Sob PEM, zero: a nave fica à deriva com a inércia que
@@ -1001,7 +1062,24 @@ impl World {
             // parecer natural: depois de rolar 90°, puxar o nariz
             // continua sendo "para cima em relação à cabine", e não
             // para o norte do mundo.
-            let rate = ship.turn_rate * dt;
+            // A entrada COMANDA uma taxa; a nave acelera até ela. Antes
+            // ia direto do teclado para a rotação, o que dava só três
+            // estados por eixo — girando a toda, parado, girando a toda
+            // para o outro lado — e enquadrar um alvo virava zigue-zague.
+            let tuning = sim_core::ship::flight::FlightTuning {
+                max_rate: ship.turn_rate,
+                ..sim_core::ship::flight::DEFAULT_TUNING
+            };
+            let fino = ship.fine_control;
+            let mut taxas = ship.ang_rate;
+            for (i, entrada) in [ship.pitch_input, ship.steer_input, ship.roll_input]
+                .into_iter()
+                .enumerate()
+            {
+                taxas[i] =
+                    sim_core::ship::flight::step_axis(taxas[i], entrada, fino, &tuning, dt);
+            }
+            ship.ang_rate = taxas;
             // Os sinais são NEGADOS de propósito.
             //
             // A frente é +Z e a câmera fica atrás, olhando ao longo de
@@ -1017,9 +1095,9 @@ impl World {
             // +1 = direita / nariz para cima.
             let new_rot = rotate_local(
                 &rot,
-                -ship.pitch_input * rate,
-                -ship.steer_input * rate,
-                ship.roll_input * rate,
+                -taxas[0] * dt,
+                -taxas[1] * dt,
+                taxas[2] * dt,
             );
             // Thrust no eixo forward (local +Z → world +Z após rotação identity).
             let fwd = forward(&new_rot);
@@ -1036,7 +1114,7 @@ impl World {
                 z: (vel.z + (fwd[2] * accel + g[2]) * dt) * drag_factor,
             };
             let mut new_vel = new_vel;
-            let mut ship = ship;
+            // (o `mut` já vem da desestruturação acima)
 
             if em_dobra {
                 // Empurrao inicial: sem ele, dobrar parado quase nao sai
@@ -1617,7 +1695,9 @@ pub fn build_dynamic_snapshot(
             vel: [v.x, v.y, v.z],
             hp_ratio: Some(s.hull_hp / s.hull_max),
             display_name: Some(s.name.clone()),
-            payload: None,
+            payload: Some(EntityPayload::Ship(crate::net::protocol::ShipPayload {
+                team: s.team,
+            })),
         });
     }
 
@@ -1843,7 +1923,9 @@ pub fn build_snapshot(world: &World) -> crate::net::protocol::SnapshotData {
             vel: [v.x, v.y, v.z],
             hp_ratio: Some(s.hull_hp / s.hull_max),
             display_name: Some(s.name.clone()),
-            payload: None,
+            payload: Some(EntityPayload::Ship(crate::net::protocol::ShipPayload {
+                team: s.team,
+            })),
         });
     }
 
@@ -2144,7 +2226,7 @@ mod tests {
             z: corpo.pos[2],
         };
         // Sem empuxo: só a gravidade age.
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None, false);
         for _ in 0..30 {
             w.step(1.0 / 30.0);
         }
@@ -2177,7 +2259,7 @@ mod tests {
         // --- pitch ---
         let mut w = World::new();
         w.spawn_player_ship(1, "p".into());
-        w.set_input(1, 0.0, 1.0, 0.0, 0.0, false, 0.0, None, None);
+        w.set_input(1, 0.0, 1.0, 0.0, 0.0, false, 0.0, None, None, false);
         for _ in 0..10 { w.step(1.0 / 30.0); }
         let f = frente(&w);
         assert!(f[1] > 0.05, "W deveria levantar o nariz, frente={f:?}");
@@ -2185,7 +2267,7 @@ mod tests {
         // --- yaw ---
         let mut w = World::new();
         w.spawn_player_ship(1, "p".into());
-        w.set_input(1, 1.0, 0.0, 0.0, 0.0, false, 0.0, None, None);
+        w.set_input(1, 1.0, 0.0, 0.0, 0.0, false, 0.0, None, None, false);
         for _ in 0..10 { w.step(1.0 / 30.0); }
         let f = frente(&w);
         assert!(f[0] < -0.05, "D deveria virar para a direita da tela (-X), frente={f:?}");
@@ -2195,7 +2277,7 @@ mod tests {
     fn dobrar(w: &mut World, pid: u32) {
         let id = w.player_ships[&pid];
         w.ships.get_mut(&id).unwrap().3.skills.unlock(ActiveSkill::Dash);
-        w.set_input(pid, 0.0, 0.0, 0.0, 1.0, false, 0.0, Some(ActiveSkill::Dash), None);
+        w.set_input(pid, 0.0, 0.0, 0.0, 1.0, false, 0.0, Some(ActiveSkill::Dash), None, false);
     }
 
     #[test]
@@ -2210,7 +2292,7 @@ mod tests {
             if dobrando {
                 dobrar(&mut w, 1);
             } else {
-                w.set_input(1, 0.0, 0.0, 0.0, 1.0, false, 0.0, None, None);
+                w.set_input(1, 0.0, 0.0, 0.0, 1.0, false, 0.0, None, None, false);
             }
             for _ in 0..30 { w.step(1.0 / 30.0); }
             let fim = w.player_position(1).unwrap();
@@ -2253,7 +2335,7 @@ mod tests {
             vel.y = 0.0;
             vel.z = 0.0;
         }
-        w.set_input(2, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None);
+        w.set_input(2, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None, false);
         for _ in 0..5 { w.step(1.0 / 30.0); }
 
         let (_, vel, _, _) = &w.ships[&perseguidor];
@@ -2313,7 +2395,7 @@ mod tests {
             w.ships.get_mut(&alvo).unwrap().3.hull_max = 100000.0;
             w.ships.get_mut(&alvo).unwrap().3.hull_hp = 100000.0;
             let antes = w.ships[&alvo].3.hull_hp;
-            w.set_input(1, 0.0, 0.0, 0.0, 0.0, true, carga, None, None);
+            w.set_input(1, 0.0, 0.0, 0.0, 0.0, true, carga, None, None, false);
             for _ in 0..8 { w.step(1.0 / 30.0); }
             antes - w.ships.get(&alvo).map(|s| s.3.hull_hp).unwrap_or(0.0)
         };
@@ -2832,7 +2914,7 @@ mod habilidades_e_consumiveis {
         let id = w.player_ships[&1];
         w.ships.get_mut(&id).unwrap().3.hull_hp = 100.0;
 
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Repair), None);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Repair), None, false);
         w.step(1.0 / 30.0);
         let depois_de_1_tick = w.ships[&id].3.hull_hp;
         assert!(depois_de_1_tick > 100.0, "deveria começar a curar");
@@ -2853,7 +2935,7 @@ mod habilidades_e_consumiveis {
         let mut w = mundo_com(&[1]);
         let id = w.player_ships[&1];
         w.ships.get_mut(&id).unwrap().3.hull_hp = 100.0;
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Repair), None);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Repair), None, false);
 
         for _ in 0..(30 * 6) {
             w.step(1.0 / 30.0);
@@ -2880,7 +2962,7 @@ mod habilidades_e_consumiveis {
             z: p.z,
         };
 
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None, false);
         w.step(1.0 / 30.0);
 
         assert!(
@@ -2893,7 +2975,7 @@ mod habilidades_e_consumiveis {
     fn pem_nao_atinge_quem_usou() {
         let mut w = mundo_com(&[1]);
         let id = w.player_ships[&1];
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None, false);
         w.step(1.0 / 30.0);
         assert_eq!(w.ships[&id].3.emp_remaining, 0.0);
     }
@@ -2908,7 +2990,7 @@ mod habilidades_e_consumiveis {
             y: p.y,
             z: p.z,
         };
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None);
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, Some(ActiveSkill::Emp), None, false);
         w.step(1.0 / 30.0);
         assert_eq!(w.ships[&alvo].3.emp_remaining, 0.0);
     }
@@ -2920,7 +3002,7 @@ mod habilidades_e_consumiveis {
         w.ships.get_mut(&id).unwrap().3.emp_remaining = 3.0;
         let projeteis_antes = w.projectiles.len();
 
-        w.set_input(1, 0.0, 0.0, 0.0, 1.0, true, 0.0, None, None);
+        w.set_input(1, 0.0, 0.0, 0.0, 1.0, true, 0.0, None, None, false);
         for _ in 0..10 {
             w.step(1.0 / 30.0);
         }
@@ -2942,7 +3024,7 @@ mod habilidades_e_consumiveis {
         w.apply_consumables(1, &[carga("repair_kit", 2)]);
         w.ships.get_mut(&id).unwrap().3.hull_hp = 100.0;
 
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0));
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false);
         w.step(1.0 / 30.0);
 
         // Instantâneo, ao contrário da skill de reparo: é o que o
@@ -2963,7 +3045,7 @@ mod habilidades_e_consumiveis {
             s.hull_hp = 200.0;
         }
 
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0));
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false);
         w.step(1.0 / 30.0);
 
         assert!(w.ships[&id].3.shield_hp > 200.0, "escudo deveria subir");
@@ -2977,7 +3059,7 @@ mod habilidades_e_consumiveis {
         w.apply_consumables(1, &[carga("repair_kit", 1)]);
         w.ships.get_mut(&id).unwrap().3.hull_hp = 100.0;
 
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0));
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false);
         w.step(1.0 / 30.0);
         let apos_primeiro = w.ships[&id].3.hull_hp;
 
@@ -2986,7 +3068,7 @@ mod habilidades_e_consumiveis {
             w.step(1.0 / 30.0);
         }
         w.ships.get_mut(&id).unwrap().3.hull_hp = apos_primeiro;
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0));
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false);
         w.step(1.0 / 30.0);
 
         assert_eq!(w.ships[&id].3.hull_hp, apos_primeiro);
@@ -3006,7 +3088,7 @@ mod habilidades_e_consumiveis {
         // recusa por cooldown.
         let mut w = mundo_com(&[1]);
         w.apply_consumables(1, &[carga("repair_kit", 3)]);
-        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0));
+        w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, Some(0), false);
         w.step(1.0 / 30.0);
 
         let evento = w.events.iter().find_map(|e| match e {
@@ -3043,7 +3125,14 @@ impl World {
         }
 
         let fwd = forward(&rot);
-        let torp = sim_core::ship::torpedo::Torpedo::new(perfil, ship.owner_player_id, fwd, target);
+        let torp = sim_core::ship::torpedo::Torpedo::new(
+            perfil,
+            ship.owner_player_id,
+            id,
+            ship.team,
+            fwd,
+            target,
+        );
         // Nasce à frente da nave, como o projétil.
         let saida = Position {
             x: pos.x + fwd[0] * 4.0,
@@ -3119,7 +3208,8 @@ impl World {
 
         let ids: Vec<EntityId> = self.torpedoes.keys().copied().collect();
         let mut removidos: Vec<EntityId> = Vec::new();
-        let mut impactos: Vec<(EntityId, f32, f32, u32, Position)> = Vec::new();
+        let mut impactos: Vec<(EntityId, f32, f32, u32, sim_core::ship::team::TeamId, Position)> =
+            Vec::new();
 
         for tid in ids {
             let Some((pos, torp)) = self.torpedoes.get(&tid).cloned() else { continue };
@@ -3182,7 +3272,18 @@ impl World {
             // --- Colisão com naves ---
             let mut acertou = None;
             for (sid, (sp, _, _, s)) in &self.ships {
-                if s.owner_player_id == torp.owner_player_id {
+                // Nunca a própria nave que lançou. Comparação por
+                // ENTIDADE: `owner_player_id` é 0 para todo alvo de
+                // treino, e o torpedo nascia dentro do próprio casco.
+                if *sid == torp.owner_entity {
+                    continue;
+                }
+                // Aliado do dono do torpedo não é alvo. Mesma regra dos
+                // projéteis.
+                if s.team != sim_core::ship::team::TEAM_NONE && s.team == torp.owner_team {
+                    continue;
+                }
+                if s.owner_player_id != 0 && s.owner_player_id == torp.owner_player_id {
                     continue;
                 }
                 // Naves em dobra são imunes, igual aos projéteis: o
@@ -3202,6 +3303,7 @@ impl World {
                     torp.profile.damage,
                     torp.profile.splash_radius,
                     torp.owner_player_id,
+                    torp.owner_team,
                     pos,
                 ));
                 removidos.push(tid);
@@ -3216,24 +3318,35 @@ impl World {
             self.destroyed.push((tid, None));
         }
 
-        for (sid, dano, splash, atacante, ponto) in impactos {
-            self.apply_torpedo_hit(sid, dano, splash, atacante, ponto);
+        for (sid, dano, splash, atacante, time, ponto) in impactos {
+            self.apply_torpedo_hit(sid, dano, splash, atacante, time, ponto);
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_torpedo_hit(
         &mut self,
         alvo: EntityId,
         dano: f32,
         splash: f32,
         atacante: u32,
+        atacante_team: sim_core::ship::team::TeamId,
         ponto: Position,
     ) {
         let mut alvos: Vec<(EntityId, f32)> = vec![(alvo, dano)];
         if splash > 0.0 {
             let r2 = splash * splash;
             for (sid, (sp, _, _, s)) in &self.ships {
-                if *sid == alvo || s.owner_player_id == atacante {
+                if *sid == alvo {
+                    continue;
+                }
+                // Respingo também respeita aliança: uma explosão que
+                // ferisse o esquadrão tornaria o torpedo pesado
+                // inutilizável em grupo.
+                if s.team != sim_core::ship::team::TEAM_NONE && s.team == atacante_team {
+                    continue;
+                }
+                if s.owner_player_id != 0 && s.owner_player_id == atacante {
                     continue;
                 }
                 let d2 = dist_sq(*sp, ponto);
@@ -3276,7 +3389,12 @@ impl World {
             let Some((ppos, _, proj)) = self.projectiles.get(&pid).cloned() else { continue };
             for (tid, (tpos, torp)) in self.torpedoes.iter_mut() {
                 // Não abate o próprio torpedo.
-                if torp.owner_player_id == proj.owner_player_id {
+                // Não abate o próprio torpedo — por entidade, de novo,
+                // porque o id de jogador 0 é compartilhado.
+                if torp.owner_entity == proj.owner_entity
+                    || (torp.owner_player_id != 0
+                        && torp.owner_player_id == proj.owner_player_id)
+                {
                     continue;
                 }
                 let raio = proj.radius + torp.profile.radius;
@@ -3698,13 +3816,14 @@ impl World {
         use sim_core::ship::training::{training_range, TrainingDummy};
 
         let Some(&id) = self.player_ships.get(&player_id) else { return };
-        let Some((pos, _, _, _)) = self.ships.get(&id) else { return };
+        let Some((pos, _, _, dono)) = self.ships.get(&id) else { return };
         let centro = *pos;
+        let time_do_jogador = dono.team;
 
         for (i, kind) in training_range().into_iter().enumerate() {
             // Espalhados em ângulos distintos ao redor do jogador, para
             // não nascerem em linha e se esconderem uns atrás dos outros.
-            let ang = (i as f32) * (std::f32::consts::TAU / 3.0);
+            let ang = (i as f32) * (std::f32::consts::TAU / 4.0);
             let d = kind.spawn_distance();
             let ancora = Position {
                 x: centro.x + ang.cos() * d,
@@ -3718,6 +3837,14 @@ impl World {
                 // torna os alvos hostis a todos os jogadores sem
                 // precisar de um sistema de facções.
                 owner_player_id: 0,
+                // O ala entra no time do JOGADOR; os demais ficam sem
+                // time, que é hostil a todos. É o que torna a distinção
+                // amigo/inimigo observável — e testável.
+                team: if kind.is_ally() {
+                    time_do_jogador
+                } else {
+                    sim_core::ship::team::TEAM_NONE
+                },
                 name: kind.label().to_string(),
                 hull_max: kind.hull(),
                 hull_hp: kind.hull(),
@@ -3805,8 +3932,9 @@ impl World {
             };
             let rot = self.ships[&origem].2;
             let fwd = forward(&rot);
+            let time = self.ships[&origem].3.team;
             let torp =
-                sim_core::ship::torpedo::Torpedo::new(perfil, dono, fwd, alvo_id);
+                sim_core::ship::torpedo::Torpedo::new(perfil, dono, origem, time, fwd, alvo_id);
             let saida = Position {
                 x: pos.x + fwd[0] * 6.0,
                 y: pos.y + fwd[1] * 6.0,
@@ -3897,9 +4025,89 @@ mod campo_de_provas {
     }
 
     #[test]
-    fn cria_os_tres_alvos() {
+    fn cria_os_quatro_alvos() {
+        // Três hostis (fixo, móvel, caçador) e um aliado.
         let (w, _) = arena_de_treino();
-        assert_eq!(alvos(&w).len(), 3);
+        assert_eq!(alvos(&w).len(), 4);
+    }
+
+    #[test]
+    fn o_ala_entra_no_time_do_jogador_e_os_demais_nao() {
+        // É o que torna a distinção amigo/inimigo observável no jogo.
+        let (w, _) = arena_de_treino();
+        let meu_time = w.ships[&w.player_ships[&1]].3.team;
+        let mut aliados = 0;
+        let mut hostis = 0;
+        for id in alvos(&w) {
+            let s = &w.ships[&id].3;
+            if s.team == meu_time {
+                aliados += 1;
+            } else {
+                hostis += 1;
+            }
+        }
+        assert_eq!(aliados, 1, "só o Ala é aliado");
+        assert_eq!(hostis, 3);
+    }
+
+    #[test]
+    fn tiro_do_jogador_atravessa_o_ala() {
+        // A consequência que dá sentido à cor diferente: não dá para
+        // matar o próprio esquadrão por engano.
+        let (mut w, _) = arena_de_treino();
+        let meu_time = w.ships[&w.player_ships[&1]].3.team;
+        let ala = *alvos(&w)
+            .iter()
+            .find(|id| w.ships[id].3.team == meu_time)
+            .unwrap();
+        let antes = w.ships[&ala].3.hull_hp + w.ships[&ala].3.shield_hp;
+
+        let pos = w.ships[&ala].0;
+        let pid = w.alloc_id();
+        w.projectiles.insert(
+            pid,
+            (
+                pos,
+                Velocity::default(),
+                Projectile {
+                    owner_player_id: 1,
+                    owner_entity: w.player_ships[&1],
+                    damage: 500.0,
+                    ttl_remaining: 2.0,
+                    radius: 2.0,
+                    speed: 100.0,
+                    splash_radius: 0.0,
+                    visual: 0,
+                    charge: 0.0,
+                },
+            ),
+        );
+        w.step(1.0 / 30.0);
+
+        let depois = w.ships[&ala].3.hull_hp + w.ships[&ala].3.shield_hp;
+        assert_eq!(depois, antes, "o ala não pode levar fogo amigo");
+    }
+
+    #[test]
+    fn o_torpedo_do_cacador_nao_explode_no_proprio_lancador() {
+        // `owner_player_id` é 0 para TODO alvo de treino: sem comparar a
+        // entidade, o torpedo nascia dentro do casco de quem o lançou e
+        // sumia no mesmo tick.
+        let (mut w, _) = arena_de_treino();
+        let cacador = *alvos(&w)
+            .iter()
+            .find(|id| {
+                w.ships[id].3.training.as_ref().unwrap().kind == TrainingKind::Cacador
+            })
+            .unwrap();
+        let hp_antes = w.ships[&cacador].3.hull_hp;
+        for _ in 0..(30 * 8) {
+            w.step(1.0 / 30.0);
+        }
+        assert_eq!(
+            w.ships[&cacador].3.hull_hp, hp_antes,
+            "o caçador se explodiu com o próprio torpedo"
+        );
     }
 
     #[test]
@@ -3966,8 +4174,8 @@ mod campo_de_provas {
             .iter()
             .filter(|e| e.kind == crate::net::protocol::EntityKind::Ship)
             .count();
-        // Três alvos + a nave do jogador.
-        assert_eq!(naves, 4);
+        // Quatro alvos + a nave do jogador.
+        assert_eq!(naves, 5);
     }
 
     #[test]

@@ -40,6 +40,16 @@ export interface AimHudState {
    * não o ponto exato onde atirar.
    */
   offscreen: boolean;
+  /**
+   * `true` quando a linha de tiro já passa pelo ponto de impacto.
+   *
+   * É o que faltava para a mira ser utilizável: o retículo fixo diz para
+   * onde os canhões apontam e o marcador diz para onde atirar, mas nada
+   * dizia QUANDO os dois coincidem. O jogador ficava tentando encostar
+   * um no outro no olho, e a 400 unidades a diferença de alguns pixels
+   * já é um tiro perdido.
+   */
+  onTarget: boolean;
 }
 
 export interface SkillState {
@@ -458,14 +468,22 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
     // ---- Mira ----
     if (state.aim) {
       aimMarker.classList.add('active');
-      aimMarker.className = `hud-aim active ${state.aim.band}${state.aim.offscreen ? ' offscreen' : ''}`;
+      aimMarker.className =
+        `hud-aim active ${state.aim.band}` +
+        `${state.aim.offscreen ? ' offscreen' : ''}` +
+        `${state.aim.onTarget ? ' on-target' : ''}`;
       aimMarker.style.transform = `translate(${state.aim.x.toFixed(1)}px, ${state.aim.y.toFixed(1)}px)`;
       aimMarker.style.borderColor = state.aim.color;
-      aimLabel.textContent = state.aim.label;
+      aimLabel.textContent = state.aim.onTarget ? 'ATIRE' : state.aim.label;
       aimLabel.style.color = state.aim.color;
     } else {
       aimMarker.className = 'hud-aim';
     }
+
+    // O retículo fixo acompanha: quando a linha de tiro casa com o
+    // ponto de impacto, ele acende. É o sinal que o olho pega sem
+    // desviar do centro da tela.
+    reticle.classList.toggle('on-target', state.aim?.onTarget === true);
 
     // ---- Alerta de torpedo ----
     const n = state.incomingTorpedoes;

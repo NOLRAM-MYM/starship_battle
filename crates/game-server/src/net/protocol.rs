@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// v6: `Input` ganhou `fire_charge` (tiro carregado) e o mundo ganhou
 /// vórtices de dobra como tipo de entidade.
-pub const PROTOCOL_VERSION: u16 = 11;
+pub const PROTOCOL_VERSION: u16 = 12;
 
 /// Identificadores de efeito visual em `ServerMsg::Vfx`.
 ///
@@ -146,6 +146,13 @@ pub enum ClientMsg {
         launch_torpedo: Option<u32>,
         /// Soltar iscas de dispersão neste tick.
         deploy_decoys: bool,
+        /// Modo de precisão: reduz a taxa de rotação para mira fina.
+        ///
+        /// É o equivalente aos propulsores vernier — a resposta grossa
+        /// serve para manobrar, a fina para enquadrar. Sem ele, a única
+        /// forma de fazer uma correção pequena é dar toques rápidos e
+        /// torcer.
+        fine_control: bool,
     },
     /// Heartbeat (liveness).
     Ping { nonce: u32 },
@@ -293,6 +300,19 @@ pub enum EntityPayload {
     Projectile(ProjectilePayload),
     /// Torpedo teleguiado.
     Torpedo(TorpedoPayload),
+    /// Nave — carrega o time, para o cliente distinguir amigo de inimigo.
+    Ship(ShipPayload),
+}
+
+/// Payload de nave.
+///
+/// Existe só pelo `team`. Sem ele o cliente marcava TODO contato como
+/// hostil: o retículo pintava aliado e inimigo da mesma cor, e a mira
+/// automática podia travar num companheiro de esquadrão — em quem os
+/// tiros nem acertam.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShipPayload {
+    pub team: u32,
 }
 
 /// Payload de torpedo.
@@ -405,6 +425,7 @@ mod tests {
             use_consumable: None,
             launch_torpedo: None,
             deploy_decoys: false,
+            fine_control: false,
         };
         let bytes = bincode::serialize(&original).unwrap();
         let decoded: ClientMsg = bincode::deserialize(&bytes).unwrap();
@@ -571,14 +592,14 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_is_v11() {
+    fn protocol_version_is_v12() {
         // v2: payloads por tipo. v3: estáticos por AOI. v4: pitch/roll.
         // v5: loadout no Join + corpos celestes. v6: tiro carregado +
         // vórtices de dobra. v7: aparência do projétil (arma + carga).
         // v8: skills no Join. v9: consumíveis no Join e no Input.
         // v10: torpedos teleguiados e iscas de dispersão.
-        // v11: campo de provas.
-        assert_eq!(PROTOCOL_VERSION, 11);
+        // v11: campo de provas. v12: time nas naves (amigo/inimigo).
+        assert_eq!(PROTOCOL_VERSION, 12);
     }
 
     #[test]

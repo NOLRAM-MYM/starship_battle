@@ -55,6 +55,13 @@ export interface RemoteMeta {
    * exige reação, um que perdeu a trava só precisa ser evitado.
    */
   torpedo: TorpedoLook | null;
+  /**
+   * Time da nave. `0` = sem time, hostil a todos.
+   *
+   * Duas naves com o mesmo time não-zero são aliadas — e os tiros nem
+   * acertam entre elas, então marcá-las como alvo seria mentira.
+   */
+  team: number;
 }
 
 /** Torpedo em voo, para o renderizador e o alerta. */
@@ -123,6 +130,7 @@ export function applySnapshot(snap: SnapshotData, receivedAt?: number): void {
         vel: [e.vel[0], e.vel[1], e.vel[2]],
         shot: e.payload?.type === 'Projectile' ? { ...e.payload.payload } : null,
         torpedo: e.payload?.type === 'Torpedo' ? { ...e.payload.payload } : null,
+        team: e.payload?.type === 'Ship' ? e.payload.payload.team : 0,
       });
       if (e.display_name) nameLabel.set(e.id, e.display_name);
       console.info('[remoteShips] nova entidade', e.id, e.kind, e.display_name);

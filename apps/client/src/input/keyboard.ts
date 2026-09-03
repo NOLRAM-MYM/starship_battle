@@ -56,6 +56,13 @@ export interface InputState {
   launchTorpedo: boolean;
   /** Edge-trigger: soltar iscas de dispersão. */
   deployDecoys: boolean;
+  /**
+   * Modo de precisão, enquanto a tecla está SEGURADA.
+   *
+   * Não é edge-trigger como os outros: é um estado mantido, do mesmo
+   * jeito que a aceleração.
+   */
+  fineControl: boolean;
 }
 
 export interface InputController {
@@ -210,6 +217,7 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
         useConsumable,
         launchTorpedo,
         deployDecoys,
+        fineControl: held.has('fineControl'),
       };
     },
 

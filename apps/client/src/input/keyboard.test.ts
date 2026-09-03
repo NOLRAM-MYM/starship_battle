@@ -47,6 +47,7 @@ describe('InputController', () => {
       useConsumable: null,
       launchTorpedo: false,
       deployDecoys: false,
+      fineControl: false,
     });
   });
 
@@ -151,6 +152,17 @@ describe('InputController', () => {
     down('Digit4');
     expect(ctrl.read().useConsumable).toBe(0);
     expect(ctrl.read().useConsumable).toBeNull();
+  });
+
+  it('a mira fina é um MODO mantido, não um toque', () => {
+    // Ao contrário das outras ações de combate, ela vale enquanto a
+    // tecla estiver segurada — é o equivalente aos propulsores vernier.
+    expect(ctrl.read().fineControl).toBe(false);
+    down('AltLeft');
+    expect(ctrl.read().fineControl).toBe(true);
+    expect(ctrl.read().fineControl, 'continua valendo sem soltar').toBe(true);
+    up('AltLeft');
+    expect(ctrl.read().fineControl).toBe(false);
   });
 
   it('R pede torpedo e F pede iscas', () => {

@@ -95,6 +95,20 @@ pub const LOCK_BREAK_SPEED: f32 = 400.0;
 pub struct Torpedo {
     pub profile: TorpedoProfile,
     pub owner_player_id: u32,
+    /// ENTIDADE que lançou.
+    ///
+    /// `owner_player_id` não basta, pelo mesmo motivo que já valia para
+    /// os projéteis: `0` é sentinela de "sem dono humano", e todos os
+    /// alvos de treino o compartilham. Sem a identidade da entidade, o
+    /// torpedo colidia com o próprio lançador no tick do disparo — ele
+    /// nasce 6 unidades à frente de um casco de raio 6.
+    pub owner_entity: u32,
+    /// Time de quem lançou.
+    ///
+    /// Carregado no torpedo, e não consultado na nave de origem, porque
+    /// ela pode ser destruída durante o voo — e um torpedo órfão não
+    /// pode virar de repente uma ameaça para o próprio esquadrão.
+    pub owner_team: crate::ship::team::TeamId,
     /// Entidade perseguida. `None` = trava perdida, segue reto.
     pub target: Option<u32>,
     /// Direção atual, unitária.
@@ -204,10 +218,19 @@ pub fn steer(dir: [f32; 3], desejada: [f32; 3], max_rad: f32) -> [f32; 3] {
 }
 
 impl Torpedo {
-    pub fn new(profile: TorpedoProfile, owner_player_id: u32, dir: [f32; 3], target: u32) -> Self {
+    pub fn new(
+        profile: TorpedoProfile,
+        owner_player_id: u32,
+        owner_entity: u32,
+        owner_team: crate::ship::team::TeamId,
+        dir: [f32; 3],
+        target: u32,
+    ) -> Self {
         Self {
             profile,
             owner_player_id,
+            owner_entity,
+            owner_team,
             target: Some(target),
             dir: norm(dir),
             // Sai devagar e acelera: dá ao alvo a fração de segundo que
@@ -359,7 +382,7 @@ mod tests {
     #[test]
     fn torpedo_pode_ser_abatido() {
         // Defesa 4: tiro. `hp` finito é o que permite isso.
-        let mut t = Torpedo::new(perfil(), 1, [0.0, 0.0, 1.0], 9);
+        let mut t = Torpedo::new(perfil(), 1, 99, 1, [0.0, 0.0, 1.0], 9);
         assert!(!t.take_damage(perfil().hp - 1.0));
         assert!(t.take_damage(2.0));
         assert!(t.expired());
@@ -367,7 +390,7 @@ mod tests {
 
     #[test]
     fn combustivel_acaba_e_o_torpedo_expira() {
-        let mut t = Torpedo::new(perfil(), 1, [0.0, 0.0, 1.0], 9);
+        let mut t = Torpedo::new(perfil(), 1, 99, 1, [0.0, 0.0, 1.0], 9);
         for _ in 0..(30 * 8) {
             t.step(1.0 / 30.0, [0.0, 0.0, 0.0], Some([0.0, 0.0, 100.0]));
         }
@@ -376,7 +399,7 @@ mod tests {
 
     #[test]
     fn sem_trava_o_torpedo_segue_reto() {
-        let mut t = Torpedo::new(perfil(), 1, [0.0, 0.0, 1.0], 9);
+        let mut t = Torpedo::new(perfil(), 1, 99, 1, [0.0, 0.0, 1.0], 9);
         t.lose_lock();
         let antes = t.dir;
         // Alvo bem a 90°: com trava, viraria.
@@ -386,7 +409,7 @@ mod tests {
 
     #[test]
     fn com_trava_o_torpedo_vira_na_direcao_do_alvo() {
-        let mut t = Torpedo::new(perfil(), 1, [0.0, 0.0, 1.0], 9);
+        let mut t = Torpedo::new(perfil(), 1, 99, 1, [0.0, 0.0, 1.0], 9);
         t.step(0.5, [0.0, 0.0, 0.0], Some([100.0, 0.0, 0.0]));
         assert!(t.dir[0] > 0.0, "deveria ter virado para +X: {:?}", t.dir);
     }
@@ -394,7 +417,7 @@ mod tests {
     #[test]
     fn o_torpedo_sai_devagar_e_acelera() {
         // A fração de segundo que torna a reação possível.
-        let mut t = Torpedo::new(perfil(), 1, [0.0, 0.0, 1.0], 9);
+        let mut t = Torpedo::new(perfil(), 1, 99, 1, [0.0, 0.0, 1.0], 9);
         let inicial = t.speed;
         assert!(inicial < perfil().speed);
         t.step(1.0, [0.0, 0.0, 0.0], Some([0.0, 0.0, 100.0]));
@@ -411,7 +434,7 @@ mod tests {
         // O teste que prova que a FUGA funciona de verdade: um alvo
         // cruzando rápido força curvas que o torpedo não fecha.
         let p = perfil();
-        let mut t = Torpedo::new(p, 1, [0.0, 0.0, 1.0], 9);
+        let mut t = Torpedo::new(p, 1, 99, 1, [0.0, 0.0, 1.0], 9);
         let mut pos = [0.0f32, 0.0, 0.0];
         let mut alvo = [0.0f32, 0.0, 300.0];
         let dt = 1.0 / 30.0;
@@ -446,7 +469,7 @@ mod tests {
         // O contrapeso do teste anterior: se ninguém nunca fosse
         // atingido, o torpedo seria decorativo.
         let p = perfil();
-        let mut t = Torpedo::new(p, 1, [0.0, 0.0, 1.0], 9);
+        let mut t = Torpedo::new(p, 1, 99, 1, [0.0, 0.0, 1.0], 9);
         let mut pos = [0.0f32, 0.0, 0.0];
         let alvo = [0.0f32, 0.0, 300.0];
         let dt = 1.0 / 30.0;

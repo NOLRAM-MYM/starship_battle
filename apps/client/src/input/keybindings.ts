@@ -30,6 +30,7 @@ export type GameAction =
   | 'consumable2'
   | 'launchTorpedo'
   | 'deployDecoys'
+  | 'fineControl'
   | 'cycleTarget'
   | 'toggleGravityLines'
   | 'toHangar';
@@ -65,6 +66,7 @@ export const ACTIONS: readonly ActionMeta[] = [
   { action: 'consumable2', label: 'Consumível 2', group: 'Combate' },
   { action: 'launchTorpedo', label: 'Torpedo (no alvo travado)', group: 'Combate' },
   { action: 'deployDecoys', label: 'Iscas de dispersão', group: 'Combate' },
+  { action: 'fineControl', label: 'Mira fina (segurar)', group: 'Pilotagem' },
   { action: 'cycleTarget', label: 'Trocar de alvo', group: 'Interface' },
   {
     action: 'toggleGravityLines',
@@ -104,6 +106,9 @@ export const DEFAULT_KEYMAP: Keymap = {
   // soltar iscas anularia a defesa.
   launchTorpedo: 'KeyR',
   deployDecoys: 'KeyF',
+  // Alt esquerdo: fica sob o polegar, dá para segurar enquanto WASD
+  // continua sendo usado. Mira fina é um MODO mantido, não um toque.
+  fineControl: 'AltLeft',
   cycleTarget: 'Tab',
   toggleGravityLines: 'KeyG',
   toHangar: 'Escape',

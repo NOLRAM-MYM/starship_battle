@@ -51,6 +51,7 @@ export function startInputLoop(
         // o pedido não é enviado: o servidor precisa saber em quem.
         launchTorpedo: snap.launchTorpedo ? (opts.lockedTarget?.() ?? null) : null,
         deployDecoys: snap.deployDecoys,
+        fineControl: snap.fineControl,
         skill: snap.skill,
       },
     });

@@ -718,9 +718,24 @@ async function bootstrap(): Promise<void> {
       const out: Contact[] = [];
       const myServerId = (globalThis as { __localEntityId?: number }).__localEntityId;
 
+      // Time da própria nave, para decidir amigo/inimigo.
+      let meuTime = 0;
+      for (const eid of getAllRemoteEntities().values()) {
+        const m = getRemoteMeta(eid);
+        if (m && m.serverId === myServerId) {
+          meuTime = m.team;
+          break;
+        }
+      }
+
       for (const eid of getAllRemoteEntities().values()) {
         const m = getRemoteMeta(eid);
         if (!m || m.kind !== 'Ship' || m.serverId === myServerId) continue;
+        // Mesmo time não-zero = aliado. Antes TODO contato era marcado
+        // como hostil: o retículo pintava aliado e inimigo igual, e a
+        // mira automática podia travar num companheiro de esquadrão —
+        // em quem os tiros nem acertam.
+        const aliado = meuTime !== 0 && m.team === meuTime;
         out.push({
           id: m.serverId,
           name: m.displayName,
@@ -729,7 +744,7 @@ async function bootstrap(): Promise<void> {
             y: Transform.posY[eid] ?? 0,
             z: Transform.posZ[eid] ?? 0,
           },
-          faction: 'hostile',
+          faction: aliado ? 'ally' : 'hostile',
           hpRatio: m.hpRatio,
         });
       }
@@ -815,6 +830,9 @@ async function bootstrap(): Promise<void> {
           Transform.posZ[myEid] ?? 0,
         );
         if (m) {
+          // O time só chega pelo snapshot: informamos o renderizador para
+          // que ele pinte aliados de outra cor.
+          remoteRenderer.setLocalTeam(m.team);
           shipQuat.set(m.quat[0], m.quat[1], m.quat[2], m.quat[3]);
           shipVel.set(m.vel[0], m.vel[1], m.vel[2]);
           forward.set(0, 0, -1).applyQuaternion(shipQuat);
@@ -977,13 +995,22 @@ async function bootstrap(): Promise<void> {
             const m = 0.94;
             const nx = naTela ? miraVec.x : Math.max(-m, Math.min(m, miraVec.x));
             const ny = naTela ? miraVec.y : Math.max(-m, Math.min(m, miraVec.y));
+            const px = (nx * 0.5 + 0.5) * larg;
+            const py = (-ny * 0.5 + 0.5) * alt;
+            // "Na mira" = o ponto de impacto está dentro do retículo
+            // fixo, que fica no centro da tela. O raio é proporcional à
+            // altura para valer igual em qualquer resolução.
+            const raioAcerto = alt * 0.035;
+            const dx = px - larg / 2;
+            const dy = py - alt / 2;
             hudState.aim = {
-              x: (nx * 0.5 + 0.5) * larg,
-              y: (-ny * 0.5 + 0.5) * alt,
+              x: px,
+              y: py,
               band: faixa,
               label: naTela ? aimBandLabel(faixa) : 'ALVO FORA DA TELA',
               color: aimBandColor(faixa),
               offscreen: !naTela,
+              onTarget: naTela && Math.hypot(dx, dy) <= raioAcerto,
             };
           }
         }

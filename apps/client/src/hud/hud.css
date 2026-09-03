@@ -682,3 +682,16 @@
   0%, 100% { opacity: 0.4; }
   50% { opacity: 0.8; }
 }
+
+/* Linha de tiro alinhada com o ponto de impacto.
+   O retículo fixo acende junto com o marcador: é o sinal que o olho
+   pega sem desviar do centro da tela, que é onde ele já está. */
+.hud-aim.on-target {
+  border-style: solid;
+  border-width: 3px;
+  opacity: 1;
+  box-shadow: 0 0 12px currentColor;
+}
+.hud-reticle.on-target {
+  filter: drop-shadow(0 0 6px var(--accent, #4ec9ff)) brightness(1.6);
+}

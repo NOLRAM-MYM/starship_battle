@@ -166,6 +166,7 @@ async fn dois_jogadores_se_veem_e_se_movem() {
                 use_consumable: None,
                 launch_torpedo: None,
                 deploy_decoys: false,
+                fine_control: false,
             },
         )
         .await;
@@ -184,6 +185,7 @@ async fn dois_jogadores_se_veem_e_se_movem() {
                 use_consumable: None,
                 launch_torpedo: None,
                 deploy_decoys: false,
+                fine_control: false,
             },
         )
         .await;

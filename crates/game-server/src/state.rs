@@ -80,6 +80,8 @@ pub enum PlayerCommand {
         launch_torpedo: Option<u32>,
         /// Pedido de iscas de dispersão.
         deploy_decoys: bool,
+        /// Modo de precisão de rotação.
+        fine_control: bool,
     },
     Leave {
         player_id: u32,
@@ -262,6 +264,7 @@ impl ServerState {
         fire_charge: f32,
         skill: Option<sim_core::skills::ActiveSkill>,
         use_consumable: Option<u8>,
+        fine_control: bool,
     ) {
         let mut world = self.world.write().await;
         world.set_input(
@@ -274,6 +277,7 @@ impl ServerState {
             fire_charge,
             skill,
             use_consumable,
+            fine_control,
         );
     }
 }
@@ -356,6 +360,7 @@ pub async fn run_simulation_loop(state: ServerState) {
                         use_consumable,
                         launch_torpedo,
                         deploy_decoys,
+                        fine_control,
                     } => {
                         world.set_input(
                             player_id,
@@ -367,6 +372,7 @@ pub async fn run_simulation_loop(state: ServerState) {
                             fire_charge,
                             skill,
                             use_consumable,
+                            fine_control,
                         );
                         if let Some(alvo) = launch_torpedo {
                             world.launch_torpedo(player_id, alvo);
@@ -553,7 +559,18 @@ mod tests {
         let _ship = state.spawn_player_ship(7, "alpha".into()).await;
 
         state
-            .set_player_input(7, 0.5, 0.0, 0.0, 0.8, true, 0.0, Some(sim_core::skills::ActiveSkill::Dash), None)
+            .set_player_input(
+                7,
+                0.5,
+                0.0,
+                0.0,
+                0.8,
+                true,
+                0.0,
+                Some(sim_core::skills::ActiveSkill::Dash),
+                None,
+                false,
+            )
             .await;
 
         let world = state.world.read().await;
@@ -572,7 +589,7 @@ mod tests {
     async fn set_player_input_clamps_values() {
         let state = ServerState::new();
         let _ = state.spawn_player_ship(1, "x".into()).await;
-        state.set_player_input(1, 5.0, 0.0, 0.0, -1.0, false, 0.0, None, None).await;
+        state.set_player_input(1, 5.0, 0.0, 0.0, -1.0, false, 0.0, None, None, false).await;
         let world = state.world.read().await;
         let (_, _, _, ship) = world
             .ships
@@ -587,7 +604,7 @@ mod tests {
     async fn input_drives_movement_in_simulation() {
         let state = ServerState::new();
         let _ = state.spawn_player_ship(42, "y".into()).await;
-        state.set_player_input(42, 0.0, 0.0, 0.0, 1.0, false, 0.0, None, None).await;
+        state.set_player_input(42, 0.0, 0.0, 0.0, 1.0, false, 0.0, None, None, false).await;
 
         // Avança 30 ticks (1s a 30Hz).
         for _ in 0..30 {

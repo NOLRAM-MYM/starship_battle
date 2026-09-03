@@ -9,7 +9,7 @@
  *   - bool: u8 (0/1)
  */
 
-export const PROTOCOL_VERSION = 11 as const;
+export const PROTOCOL_VERSION = 12 as const;
 /**
  * Precisa bater com `SNAPSHOT_RATE_HZ` do servidor — é o intervalo que a
  * interpolação usa como alvo. O servidor tica a 30Hz e envia snapshot a
@@ -66,6 +66,8 @@ export interface InputMsg {
   launchTorpedo: number | null;
   /** Soltar iscas de dispersão neste tick. */
   deployDecoys: boolean;
+  /** Modo de precisão: reduz a taxa de rotação para mira fina. */
+  fineControl: boolean;
   skill: ActiveSkill | null;
 }
 export interface PingMsg {
@@ -132,7 +134,8 @@ export type EntityPayload =
   | { type: 'Wreck'; payload: WreckPayload }
   | { type: 'Vortex'; payload: VortexPayload }
   | { type: 'Projectile'; payload: ProjectilePayload }
-  | { type: 'Torpedo'; payload: TorpedoPayload };
+  | { type: 'Torpedo'; payload: TorpedoPayload }
+  | { type: 'Ship'; payload: ShipPayload };
 
 /**
  * Aparência de um projétil, decidida pelo servidor.
@@ -245,6 +248,17 @@ export interface TorpedoPayload {
   locked: boolean;
 }
 
+/**
+ * Dados de uma nave. Existe só pelo `team`.
+ *
+ * Sem ele o cliente marcava TODO contato como hostil: o retículo pintava
+ * aliado e inimigo da mesma cor, e a mira automática podia travar num
+ * companheiro de esquadrão — em quem os tiros nem acertam.
+ */
+export interface ShipPayload {
+  team: number;
+}
+
 export type BodyKind = 'Star' | 'Planet' | 'GasGiant' | 'Moon' | 'NeutronStar' | 'BlackHole';
 
 /**
@@ -344,6 +358,8 @@ const PAYLOAD_VARIANT = {
   Projectile: 5,
   // v10.
   Torpedo: 6,
+  // v12.
+  Ship: 7,
 } as const;
 
 // --- Encoder binário (apenas o que precisamos emitir) ---
@@ -524,6 +540,8 @@ function readPayload(r: BincodeReader): EntityPayload | null {
           radius: r.readF32(),
         },
       };
+    case PAYLOAD_VARIANT.Ship:
+      return { type: 'Ship', payload: { team: r.readU32() } };
     case PAYLOAD_VARIANT.Torpedo:
       return {
         type: 'Torpedo',
@@ -663,6 +681,7 @@ export function encodeClientMsg(msg: ClientMsg): Uint8Array {
         w.writeU32(msg.payload.launchTorpedo);
       }
       w.writeBool(msg.payload.deployDecoys);
+      w.writeBool(msg.payload.fineControl);
       break;
     case 'Ping':
       w.writeU32(CLIENT_VARIANT.Ping);

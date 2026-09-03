@@ -34,6 +34,14 @@ import { createSkillFx, type SkillFxHandle, type SkillFxKind } from './SkillFx';
 /** Cores por relação com o jogador. */
 const COLOR_SELF = { hull: 0x2e5f7a, glow: 0x45e5a4 };
 const COLOR_FOE = { hull: 0x5a2b38, glow: 0xff5f6d };
+/**
+ * Aliado: casco esverdeado, distinto do vermelho hostil.
+ *
+ * Sem isto todas as outras naves eram pintadas de vermelho, inclusive as
+ * do próprio esquadrão — e a única forma de descobrir que alguém era
+ * aliado era atirar nele e ver o tiro atravessar.
+ */
+const COLOR_ALLY = { hull: 0x2c5c46, glow: 0x45e5a4 };
 
 interface Entry {
   group: THREE.Group;
@@ -63,6 +71,8 @@ export class RemoteEntityRenderer {
   private localSpec: ChassisSpec | null = null;
   /** 0..1 — carga do gatilho da nave local, para o brilho no cano. */
   private localCharge = 0;
+  /** Time da nave local, para pintar aliados de outra cor. */
+  private localTeam = 0;
   /**
    * Animações de habilidade, presas às naves.
    *
@@ -104,6 +114,11 @@ export class RemoteEntityRenderer {
    * retorno era uma barra de 4px no HUD, e segurar o gatilho parecia
    * não fazer nada — o jogador soltava antes de valer a pena.
    */
+  /** Informa o time do jogador, para distinguir aliados de inimigos. */
+  setLocalTeam(team: number): void {
+    this.localTeam = team;
+  }
+
   setLocalCharge(t: number): void {
     this.localCharge = Math.min(1, Math.max(0, t));
   }
@@ -178,7 +193,11 @@ export class RemoteEntityRenderer {
   private createShipEntry(meta: RemoteMeta, localId: number): Entry {
     const group = new THREE.Group();
     const isLocal = meta.serverId === localId;
-    const palette = isLocal ? COLOR_SELF : COLOR_FOE;
+    const palette = isLocal
+      ? COLOR_SELF
+      : meta.team !== 0 && meta.team === this.localTeam
+        ? COLOR_ALLY
+        : COLOR_FOE;
 
     // A nave do próprio jogador usa o spec montado no hangar — mesmo
     // chassi, mesmas peças. As demais usam um contorno genérico

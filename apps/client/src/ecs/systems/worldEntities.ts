@@ -85,6 +85,7 @@ function applyPayloadToKind(
       return null;
     case 'Projectile':
     case 'Torpedo':
+    case 'Ship':
       // Idem: projéteis e torpedos vivem no renderizador de entidades
       // remotas, que já os interpola quadro a quadro.
       return null;
