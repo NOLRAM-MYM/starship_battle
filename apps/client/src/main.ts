@@ -48,6 +48,7 @@ import { mountXrToggle } from './ui/xrToggle.js';
 import { isMobile } from './input/adaptive.js';
 import { TouchController } from './input/touch.js';
 import { mountHud, createHudState } from './hud/Hud.js';
+import { markerFromProjection, type ContactMarker } from './hud/ContactMarkers';
 import { loadSettings, applySettings } from './ui/settings.js';
 import { createAudioBus } from './audio/AudioBus.js';
 import { createPerfHud } from './perf/PerfHud.js';
@@ -713,6 +714,7 @@ async function bootstrap(): Promise<void> {
     // um Vector3 por quadro pressiona o coletor à toa.
     const miraVec = new THREE.Vector3();
     const canhaoVec = new THREE.Vector3();
+    const marcaVec = new THREE.Vector3();
     const camDir = new THREE.Vector3();
     const paraMira = new THREE.Vector3();
     const shipPos = new THREE.Vector3();
@@ -937,6 +939,41 @@ async function bootstrap(): Promise<void> {
         } else {
           hudState.targetId = null;
           hudState.targetName = null;
+        }
+
+        // --- Marcadores de contato ---
+        //
+        // As luzes de navegação resolvem a percepção a média distância;
+        // param de resolver longe (a nave cabe em poucos pixels) e fora
+        // da tela (o campo é ~70°, o combate é 360°).
+        {
+          const larg = renderer.three.domElement.clientWidth;
+          const alt = renderer.three.domElement.clientHeight;
+          renderer.camera.updateMatrixWorld();
+          camDir.set(0, 0, -1).applyQuaternion(renderer.camera.quaternion);
+          const marcadores: ContactMarker[] = [];
+          for (const c of contacts) {
+            marcaVec.set(c.pos.x, c.pos.y, c.pos.z);
+            paraMira.copy(marcaVec).sub(renderer.camera.position);
+            const dist = paraMira.length();
+            const aFrente = paraMira.dot(camDir) > 0;
+            marcaVec.project(renderer.camera);
+            marcadores.push(
+              markerFromProjection(
+                { x: marcaVec.x, y: marcaVec.y },
+                aFrente,
+                larg,
+                alt,
+                {
+                  distance: dist,
+                  faction: c.faction,
+                  isTarget: hudState.targetId === c.id,
+                  label: c.name,
+                },
+              ),
+            );
+          }
+          hudState.contactMarkers = marcadores;
         }
 
       // --- Mira contra o alvo efetivo ---

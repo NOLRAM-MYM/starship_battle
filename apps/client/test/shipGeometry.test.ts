@@ -12,14 +12,16 @@ import * as THREE from 'three/webgpu';
 import { createShipMesh } from '../src/render/ShipMesh.js';
 
 /** Todas as malhas com a posição no espaço da raiz e o raio aproximado. */
-function pecas(root: THREE.Object3D): Array<{ z: number; y: number; mat: THREE.Material }> {
+function pecas(
+  root: THREE.Object3D,
+): Array<{ z: number; y: number; mat: THREE.Material; obj: THREE.Object3D }> {
   root.updateMatrixWorld(true);
-  const out: Array<{ z: number; y: number; mat: THREE.Material }> = [];
+  const out: Array<{ z: number; y: number; mat: THREE.Material; obj: THREE.Object3D }> = [];
   root.traverse((o) => {
     if (o instanceof THREE.Mesh) {
       const p = o.getWorldPosition(new THREE.Vector3());
       const m = Array.isArray(o.material) ? o.material[0]! : o.material;
-      out.push({ z: p.z, y: p.y, mat: m });
+      out.push({ z: p.z, y: p.y, mat: m, obj: o });
     }
   });
   return out;
@@ -60,7 +62,14 @@ describe('geometria da nave x convenção do servidor', () => {
     // A cabine é o marcador visual de "onde é a frente". Se ela caísse
     // atrás, o jogador leria a nave ao contrário mesmo com a física certa.
     const ship = createShipMesh(spec);
-    const todas = pecas(ship.group);
+    // Ignora as luzes de navegação: o farol fica no ponto mais alto do
+    // casco de propósito (para ser visto de cima), e a heurística de
+    // "peça mais alta" passaria a encontrá-lo em vez da cabine.
+    const luzes = new Set<THREE.Object3D>();
+    ship.group.traverse((o) => {
+      if (o.name === 'nav-lights') o.traverse((c) => luzes.add(c));
+    });
+    const todas = pecas(ship.group).filter((p) => !luzes.has(p.obj));
     // A cabine é a peça mais alta (fica sobre o dorso).
     const cabine = todas.reduce((a, b) => (b.y > a.y ? b : a));
     expect(cabine.z, 'cabine deveria estar à frente do centro').toBeGreaterThan(0);

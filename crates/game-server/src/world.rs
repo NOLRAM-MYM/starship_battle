@@ -3820,6 +3820,37 @@ impl World {
         let centro = *pos;
         let time_do_jogador = dono.team;
 
+        // Remove um campo anterior antes de montar outro.
+        //
+        // Sem isto os alvos ACUMULAM: o cliente reconecta (queda de rede,
+        // recarregar a página) e cada `Join` com `practice` criava mais
+        // quatro. Na verificação apareceram cinco Caçadores lançando
+        // torpedos ao mesmo tempo — a tela virava uma parede de
+        // marcadores e o campo de provas deixava de servir para provar
+        // qualquer coisa.
+        let antigos: Vec<EntityId> = self
+            .ships
+            .iter()
+            .filter(|(_, (_, _, _, s))| s.training.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        for antigo in antigos {
+            self.ships.remove(&antigo);
+            self.destroyed.push((antigo, None));
+        }
+        // Torpedos órfãos do campo anterior também vão embora: quem os
+        // lançou não existe mais.
+        let torp_orfaos: Vec<EntityId> = self
+            .torpedoes
+            .iter()
+            .filter(|(_, (_, t))| !self.ships.contains_key(&t.owner_entity))
+            .map(|(id, _)| *id)
+            .collect();
+        for t in torp_orfaos {
+            self.torpedoes.remove(&t);
+            self.destroyed.push((t, None));
+        }
+
         for (i, kind) in training_range().into_iter().enumerate() {
             // Espalhados em ângulos distintos ao redor do jogador, para
             // não nascerem em linha e se esconderem uns atrás dos outros.
@@ -4263,6 +4294,35 @@ mod campo_de_provas {
             }
         }
         panic!("nenhum torpedo foi lançado");
+    }
+
+    #[test]
+    fn pedir_o_campo_duas_vezes_nao_acumula_alvos() {
+        // O cliente reconecta (queda de rede, recarregar a página) e
+        // cada `Join` com `practice` chamava isto de novo. Na
+        // verificação apareceram cinco Caçadores lançando torpedos ao
+        // mesmo tempo, e a tela virou uma parede de marcadores.
+        let (mut w, _) = arena_de_treino();
+        assert_eq!(alvos(&w).len(), 4);
+        w.spawn_training_range(1);
+        w.spawn_training_range(1);
+        assert_eq!(alvos(&w).len(), 4, "o campo tem que ser substituído, não somado");
+    }
+
+    #[test]
+    fn remontar_o_campo_limpa_os_torpedos_orfaos() {
+        // Quem os lançou deixou de existir; deixá-los voando seria uma
+        // ameaça sem origem.
+        let (mut w, _) = arena_de_treino();
+        for _ in 0..(30 * 6) {
+            w.step(1.0 / 30.0);
+            if !w.torpedoes.is_empty() {
+                break;
+            }
+        }
+        assert!(!w.torpedoes.is_empty(), "deveria haver torpedo em voo");
+        w.spawn_training_range(1);
+        assert!(w.torpedoes.is_empty(), "torpedos órfãos deveriam sumir");
     }
 
     #[test]

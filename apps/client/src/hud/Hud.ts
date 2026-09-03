@@ -12,6 +12,7 @@
 
 import type { ActiveSkill } from '../net/protocol.js';
 import { createRadar, type RadarHandle } from './Radar.js';
+import { createContactMarkers, type ContactMarker } from './ContactMarkers';
 import { createCompass, type CompassHandle } from './Compass.js';
 import type { Contact, Vec3 } from '../game/targeting.js';
 import type { NavPoint } from '../game/navigation.js';
@@ -93,6 +94,14 @@ export interface HudState {
    */
   gun: { x: number; y: number } | null;
   /**
+   * Marcadores de contato, já projetados na tela.
+   *
+   * As luzes de navegação resolvem a percepção a média distância, mas
+   * param de resolver longe (a nave cabe em poucos pixels) e fora da
+   * tela (o campo é ~70°, o combate é 360°).
+   */
+  contactMarkers: ContactMarker[];
+  /**
    * Torpedos perseguindo o jogador AGORA.
    *
    * Sem este aviso, um torpedo teleguiado seria uma morte sem
@@ -158,6 +167,7 @@ export function createHudState(): HudState {
     consumables: [],
     aim: null,
     gun: null,
+    contactMarkers: [],
     incomingTorpedoes: 0,
     skills: [
       { id: 'Dash', cooldownEnd: 0, cooldownTotal: 5000 },
@@ -329,6 +339,8 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
     wasReady: boolean;
   }
   const skillRefs: SkillRefs[] = [];
+  let ultimaLargura = -1;
+  let ultimaAltura = -1;
 
   state.skills.forEach((skill, idx) => {
     const box = el('div', 'hud-skill');
@@ -407,6 +419,11 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
   });
 
   // ---------- Retículo, vinheta e alertas ----------
+  // Camada de marcadores: canvas, e não elementos DOM. Com dezenas de
+  // contatos, um elemento por nave recompõe o layout a cada quadro, e o
+  // custo aparece exatamente quando há muita coisa acontecendo.
+  const contatos = createContactMarkers();
+
   const reticle = el('div', 'hud-reticle');
 
   // ---------- Marcador de mira (ponto de impacto previsto) ----------
@@ -426,7 +443,7 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
 
   root.append(
     vitals, target, radar.element, credits, actions,
-    compass.element, exitBtn, gravBtn, gravity, chargeWrap, reticle, aimMarker,
+    contatos.canvas, compass.element, exitBtn, gravBtn, gravity, chargeWrap, reticle, aimMarker,
     torpedoWarn, vignette, toasts,
   );
   container.appendChild(root);
@@ -489,6 +506,16 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
     } else {
       aimMarker.className = 'hud-aim';
     }
+
+    // ---- Marcadores de contato ----
+    const larguraTela = root.clientWidth;
+    const alturaTela = root.clientHeight;
+    if (larguraTela !== ultimaLargura || alturaTela !== ultimaAltura) {
+      ultimaLargura = larguraTela;
+      ultimaAltura = alturaTela;
+      contatos.resize(larguraTela, alturaTela, window.devicePixelRatio || 1);
+    }
+    contatos.draw(state.contactMarkers);
 
     // ---- Retículo (linha de tiro) ----
     if (state.gun) {
@@ -589,6 +616,7 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
   }
 
   function destroy(): void {
+    contatos.dispose();
     if (vignetteTimer) clearTimeout(vignetteTimer);
     radar.destroy();
     compass.destroy();

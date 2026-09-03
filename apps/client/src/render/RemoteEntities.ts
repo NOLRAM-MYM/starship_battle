@@ -73,6 +73,8 @@ export class RemoteEntityRenderer {
   private localCharge = 0;
   /** Time da nave local, para pintar aliados de outra cor. */
   private localTeam = 0;
+  /** Tempo acumulado, para a pulsação dos faróis. */
+  private tempo = 0;
   /**
    * Animações de habilidade, presas às naves.
    *
@@ -146,6 +148,9 @@ export class RemoteEntityRenderer {
    */
   sync(dt = 0.016): void {
     this.skillFx.update(dt);
+    // Relógio das luzes de navegação. Compartilhado por todas as naves:
+    // o que separa as piscadas é a fase de cada uma, não o relógio.
+    this.tempo += dt;
     const eids = RemoteEntityRenderer.remotesQuery(world) as readonly number[];
     const liveServerIds = new Set<number>();
     const localId = this.localId();
@@ -274,6 +279,12 @@ export class RemoteEntityRenderer {
       entry.lastPos.set(px, py, pz);
       return;
     }
+
+    // --- Luzes de navegação ---
+    //
+    // A cor do farol é da facção, então ela é reaplicada aqui: o time
+    // só chega pelo snapshot, depois da nave já ter sido criada.
+    entry.ship.navLights.update(this.tempo);
 
     // --- Motores reagem à velocidade ---
     const speed = Math.hypot(meta.vel[0], meta.vel[1], meta.vel[2]);

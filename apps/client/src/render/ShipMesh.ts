@@ -11,6 +11,7 @@
  */
 
 import * as THREE from 'three/webgpu';
+import { createNavLights, type NavLightsHandle } from './NavLights';
 import {
   mountTransform,
   partBaseScale,
@@ -72,6 +73,19 @@ export interface MountedPart {
   restPos: THREE.Vector3;
 }
 
+/**
+ * Semente estável para a fase do farol.
+ *
+ * Duas naves iguais lado a lado piscando em uníssono pareceriam um
+ * sistema só; derivar da aparência as separa sem estado extra.
+ */
+function seedFromSpec(spec: ChassisSpec): number {
+  const s = `${spec.kind}${spec.hull}${spec.glow}${(spec.loadout ?? []).join()}`;
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
 export interface ShipMesh {
   group: THREE.Group;
   /** Peças do loadout montadas no casco. */
@@ -80,6 +94,13 @@ export interface ShipMesh {
   engineMaterial: THREE.MeshBasicMaterial;
   /** Halo que pulsa quando a nave leva dano. */
   hullMaterial: THREE.MeshStandardMaterial;
+  /**
+   * Luzes de navegação. Anime com `navLights.update(t)` por quadro.
+   *
+   * São o que torna a nave visível a distância sem clarear o casco —
+   * clarear resolveria a percepção e destruiria a cena.
+   */
+  navLights: NavLightsHandle;
   dispose(): void;
 }
 
@@ -341,6 +362,13 @@ export function createShipMesh(spec: ChassisSpec): ShipMesh {
     }
   }
 
+  // Luzes de navegação. Vão no `frame`, junto com o resto do casco, para
+  // acompanharem a rotação de orientação abaixo — bombordo precisa ficar
+  // à esquerda DA NAVE, não à esquerda do mundo.
+  const navLights = createNavLights({ len, wid, hei }, spec.glow, seedFromSpec(spec));
+  frame.add(navLights.group);
+  disposables.push(navLights);
+
   // Vira o conjunto para +Z, a frente que o servidor usa.
   frame.rotation.y = Math.PI;
 
@@ -348,6 +376,7 @@ export function createShipMesh(spec: ChassisSpec): ShipMesh {
 
   return {
     group,
+    navLights,
     parts,
     engineMaterial,
     hullMaterial,

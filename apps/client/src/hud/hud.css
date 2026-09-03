@@ -701,3 +701,14 @@
 .hud-reticle.on-target {
   filter: drop-shadow(0 0 6px var(--accent, #4ec9ff)) brightness(1.6);
 }
+
+/* ---------- Camada de marcadores de contato ---------- */
+/* Cobre a tela toda e não recebe clique: é sobreposição pura. Fica ABAIXO
+   dos painéis na ordem de empilhamento porque um colchete sobre o painel
+   de vitais atrapalharia a leitura de casco e escudo. */
+.hud-contacts {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
