@@ -162,6 +162,8 @@ async fn dois_jogadores_se_veem_e_se_movem() {
                 fire_charge: 0.0,
                 skill: None,
                 use_consumable: None,
+                launch_torpedo: None,
+                deploy_decoys: false,
             },
         )
         .await;
@@ -178,6 +180,8 @@ async fn dois_jogadores_se_veem_e_se_movem() {
                 fire_charge: 0.0,
                 skill: None,
                 use_consumable: None,
+                launch_torpedo: None,
+                deploy_decoys: false,
             },
         )
         .await;

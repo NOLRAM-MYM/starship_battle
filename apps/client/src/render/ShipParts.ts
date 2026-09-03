@@ -102,6 +102,36 @@ const VISUALS: Record<string, PartVisual> = {
     },
   },
 
+  // ------------------------------------------------------- Torpedos
+  // Tubos de lançamento sob a asa: silhueta grossa e curta, bem
+  // diferente do cano fino de um canhão.
+  torpedo_seeker: {
+    mount: 'weapon',
+    color: 0x6b6f78,
+    emissive: 0xff5f6d,
+    glow: 0.45,
+    metalness: 0.8,
+    roughness: 0.4,
+    build: (s) => {
+      const tubo = new THREE.CylinderGeometry(0.22 * s, 0.22 * s, 1.1 * s, 8);
+      tubo.rotateX(Math.PI / 2);
+      return tubo;
+    },
+  },
+  torpedo_heavy: {
+    mount: 'weapon',
+    color: 0x55585f,
+    emissive: 0xff8a3c,
+    glow: 0.6,
+    metalness: 0.85,
+    roughness: 0.35,
+    build: (s) => {
+      const tubo = new THREE.CylinderGeometry(0.34 * s, 0.34 * s, 1.7 * s, 10);
+      tubo.rotateX(Math.PI / 2);
+      return tubo;
+    },
+  },
+
   // -------------------------------------------------------- Motores
   engine_mk1: {
     mount: 'engine',

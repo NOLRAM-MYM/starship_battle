@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// v6: `Input` ganhou `fire_charge` (tiro carregado) e o mundo ganhou
 /// vórtices de dobra como tipo de entidade.
-pub const PROTOCOL_VERSION: u16 = 9;
+pub const PROTOCOL_VERSION: u16 = 10;
 
 /// Identificadores de efeito visual em `ServerMsg::Vfx`.
 ///
@@ -32,6 +32,8 @@ pub const VFX_EXPLOSION_SHIP: u8 = 3;
 pub const VFX_EXPLOSION_LARGE: u8 = 4;
 /// Pulso eletromagnético: onda de choque expandindo.
 pub const VFX_EMP: u8 = 5;
+/// Iscas de dispersão soltas: cintilação que confunde rastreadores.
+pub const VFX_DECOY: u8 = 6;
 // Não há VFX para Reparo nem para Dobra: as duas são animações PRESAS À
 // NAVE, e `SkillActivated` já carrega o `entity_id`, então o cliente
 // consegue ancorá-las na nave certa e acompanhá-la enquanto ela se move.
@@ -128,6 +130,14 @@ pub enum ClientMsg {
         /// quantas cargas restam. Mandar o id do item daqui deixaria o
         /// cliente escolher o efeito.
         use_consumable: Option<u8>,
+        /// Entidade contra a qual lançar um torpedo neste tick.
+        ///
+        /// O cliente só PEDE: o servidor confere lançador equipado,
+        /// cooldown e alcance de travamento antes de criar qualquer
+        /// coisa.
+        launch_torpedo: Option<u32>,
+        /// Soltar iscas de dispersão neste tick.
+        deploy_decoys: bool,
     },
     /// Heartbeat (liveness).
     Ping { nonce: u32 },
@@ -187,7 +197,13 @@ pub enum ServerMsg {
     /// anteriores. Carrega `charges_left` porque o servidor é quem
     /// decide se o uso valeu (cooldown, carga zerada); um contador
     /// mantido só no cliente divergiria na primeira recusa.
-    ConsumableUsed { entity_id: u32, slot: u8, vfx: u8, charges_left: u32 }
+    ConsumableUsed { entity_id: u32, slot: u8, vfx: u8, charges_left: u32 },
+    /// Um torpedo perdeu a trava.
+    ///
+    /// `reason`: 0 = alvo rápido demais (dobra), 1 = iscas, 2 = fora de
+    /// alcance. O alvo precisa saber QUAL defesa funcionou, senão não
+    /// aprende qual usar da próxima vez.
+    TorpedoLockLost { torpedo_id: u32, reason: u8 }
 }
 
 /// Lote de entidades estáticas (asteroides, anomalias, destroços).
@@ -242,6 +258,8 @@ pub enum EntityKind {
     Wreck,
     /// Vórtice de dobra: rastro que impulsiona quem entrar.
     Vortex,
+    /// Torpedo teleguiado em voo.
+    Torpedo,
 }
 
 /// Payload específico por tipo de entidade.
@@ -265,6 +283,24 @@ pub enum EntityPayload {
     /// mantêm as discriminantes, então clientes v6 continuam lendo
     /// tudo o que já liam.
     Projectile(ProjectilePayload),
+    /// Torpedo teleguiado.
+    Torpedo(TorpedoPayload),
+}
+
+/// Payload de torpedo.
+///
+/// `locked` é o que o alvo precisa saber para decidir: um torpedo que
+/// ainda persegue exige reação, um que perdeu a trava só precisa ser
+/// evitado. Sem este campo as duas situações seriam idênticas na tela.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TorpedoPayload {
+    /// Direção de voo, unitária.
+    pub dir: [f32; 3],
+    pub radius: f32,
+    /// 0..1 — casco restante, para o alvo saber se vale atirar nele.
+    pub hp_ratio: f32,
+    /// `true` enquanto persegue alguém.
+    pub locked: bool,
 }
 
 /// Payload de projétil.
@@ -359,6 +395,8 @@ mod tests {
             fire_charge: 1.25,
             skill: Some(sim_core::skills::ActiveSkill::Emp),
             use_consumable: None,
+            launch_torpedo: None,
+            deploy_decoys: false,
         };
         let bytes = bincode::serialize(&original).unwrap();
         let decoded: ClientMsg = bincode::deserialize(&bytes).unwrap();
@@ -525,12 +563,13 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_is_v9() {
+    fn protocol_version_is_v10() {
         // v2: payloads por tipo. v3: estáticos por AOI. v4: pitch/roll.
         // v5: loadout no Join + corpos celestes. v6: tiro carregado +
         // vórtices de dobra. v7: aparência do projétil (arma + carga).
         // v8: skills no Join. v9: consumíveis no Join e no Input.
-        assert_eq!(PROTOCOL_VERSION, 9);
+        // v10: torpedos teleguiados e iscas de dispersão.
+        assert_eq!(PROTOCOL_VERSION, 10);
     }
 
     #[test]
@@ -745,6 +784,108 @@ mod skill_fixture {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/client/src/net/__fixtures__");
         std::fs::create_dir_all(dir).unwrap();
         let mut f = std::fs::File::create(format!("{dir}/skills.json")).unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+    }
+}
+
+/// Fixture da solução de mira para o cliente.
+///
+/// O retículo do cliente refaz esta conta em TypeScript, porque precisa
+/// dela a cada quadro. Uma divergência não quebra nada — só faz a mira
+/// apontar para o lugar errado, em silêncio, que é o pior modo de falha
+/// possível para um recurso de pontaria.
+#[cfg(test)]
+mod aim_fixture {
+    use sim_core::ship::aim::{solve, AimInput};
+    use std::io::Write;
+
+    #[test]
+    fn escreve_casos_de_mira_para_o_cliente() {
+        let casos: Vec<(&str, AimInput)> = vec![
+            (
+                "parado",
+                AimInput {
+                    shooter_pos: [0.0, 0.0, 0.0],
+                    shooter_vel: [0.0, 0.0, 0.0],
+                    target_pos: [0.0, 0.0, 200.0],
+                    target_vel: [0.0, 0.0, 0.0],
+                    projectile_speed: 200.0,
+                    gravity: [0.0, 0.0, 0.0],
+                    projectile_ttl: 4.0,
+                },
+            ),
+            (
+                "cruzando",
+                AimInput {
+                    shooter_pos: [0.0, 0.0, 0.0],
+                    shooter_vel: [0.0, 0.0, 0.0],
+                    target_pos: [0.0, 0.0, 400.0],
+                    target_vel: [70.0, 0.0, 0.0],
+                    projectile_speed: 200.0,
+                    gravity: [0.0, 0.0, 0.0],
+                    projectile_ttl: 4.0,
+                },
+            ),
+            (
+                "com_gravidade",
+                AimInput {
+                    shooter_pos: [0.0, 0.0, 0.0],
+                    shooter_vel: [0.0, 0.0, 0.0],
+                    target_pos: [0.0, 0.0, 300.0],
+                    target_vel: [0.0, 0.0, 0.0],
+                    projectile_speed: 180.0,
+                    gravity: [0.0, -40.0, 0.0],
+                    projectile_ttl: 4.0,
+                },
+            ),
+            (
+                "nave_em_movimento",
+                AimInput {
+                    shooter_pos: [10.0, 5.0, -20.0],
+                    shooter_vel: [30.0, 0.0, 60.0],
+                    target_pos: [120.0, 40.0, 500.0],
+                    target_vel: [-25.0, 10.0, 15.0],
+                    projectile_speed: 240.0,
+                    gravity: [0.0, -18.0, 5.0],
+                    projectile_ttl: 3.0,
+                },
+            ),
+            (
+                "fora_de_alcance",
+                AimInput {
+                    shooter_pos: [0.0, 0.0, 0.0],
+                    shooter_vel: [0.0, 0.0, 0.0],
+                    target_pos: [0.0, 0.0, 5000.0],
+                    target_vel: [0.0, 0.0, 0.0],
+                    projectile_speed: 200.0,
+                    gravity: [0.0, 0.0, 0.0],
+                    projectile_ttl: 4.0,
+                },
+            ),
+        ];
+
+        let mut linhas: Vec<String> = Vec::new();
+        for (nome, i) in &casos {
+            let s = solve(i);
+            linhas.push(format!(
+                "  \"{}\": {{\n    \"input\": {{ \"shooterPos\": [{},{},{}], \"shooterVel\": [{},{},{}], \"targetPos\": [{},{},{}], \"targetVel\": [{},{},{}], \"projectileSpeed\": {}, \"gravity\": [{},{},{}], \"projectileTtl\": {} }},\n    \"leadPoint\": [{},{},{}],\n    \"timeOfFlight\": {},\n    \"difficulty\": {},\n    \"reachable\": {}\n  }}",
+                nome,
+                i.shooter_pos[0], i.shooter_pos[1], i.shooter_pos[2],
+                i.shooter_vel[0], i.shooter_vel[1], i.shooter_vel[2],
+                i.target_pos[0], i.target_pos[1], i.target_pos[2],
+                i.target_vel[0], i.target_vel[1], i.target_vel[2],
+                i.projectile_speed,
+                i.gravity[0], i.gravity[1], i.gravity[2],
+                i.projectile_ttl,
+                s.lead_point[0], s.lead_point[1], s.lead_point[2],
+                s.time_of_flight, s.difficulty, s.reachable
+            ));
+        }
+        let json = format!("{{\n{}\n}}\n", linhas.join(",\n"));
+
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/client/src/net/__fixtures__");
+        std::fs::create_dir_all(dir).unwrap();
+        let mut f = std::fs::File::create(format!("{dir}/aim.json")).unwrap();
         f.write_all(json.as_bytes()).unwrap();
     }
 }

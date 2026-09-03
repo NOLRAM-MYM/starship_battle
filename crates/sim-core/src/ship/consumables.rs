@@ -19,6 +19,12 @@ pub enum ConsumableEffect {
     RepairHull { amount: f32 },
     /// Restaura escudo imediatamente.
     RestoreShield { amount: f32 },
+    /// Solta iscas que quebram a trava de torpedos.
+    ///
+    /// Diferente das outras duas: não repara nada, compra TEMPO. É a
+    /// defesa contra torpedo que não custa a dobra nem exige acertar um
+    /// alvo pequeno — custa uma carga.
+    DeployDecoys,
 }
 
 /// Perfil de um consumível do catálogo.
@@ -37,6 +43,7 @@ pub struct ConsumableProfile {
 /// Índices de VFX. Estáveis: o cliente depende desta numeração.
 pub const VFX_CONSUMABLE_REPAIR: u8 = 0;
 pub const VFX_CONSUMABLE_SHIELD: u8 = 1;
+pub const VFX_CONSUMABLE_DECOY: u8 = 2;
 
 /// Perfil de um `templateId` do catálogo da loja.
 ///
@@ -56,9 +63,27 @@ pub fn consumable_profile(template_id: &str) -> Option<ConsumableProfile> {
             cooldown: 4.0,
             vfx: VFX_CONSUMABLE_SHIELD,
         },
+        "decoy_flare" => ConsumableProfile {
+            effect: ConsumableEffect::DeployDecoys,
+            // Espera curta: é uma reação, e uma espera longa faria o
+            // jogador morrer com a carga no bolso.
+            cooldown: 3.0,
+            vfx: VFX_CONSUMABLE_DECOY,
+        },
         _ => return None,
     };
     Some(p)
+}
+
+/// Índice do primeiro slot com iscas, se houver.
+///
+/// As iscas têm tecla PRÓPRIA além dos slots numerados, porque são uma
+/// reação de fração de segundo: procurar em qual slot elas estão no meio
+/// de uma perseguição é o mesmo que não tê-las.
+pub fn decoy_slot(belt: &ConsumableBelt) -> Option<usize> {
+    belt.slots
+        .iter()
+        .position(|s| s.template_id == "decoy_flare" && s.charges > 0)
 }
 
 /// Uma carga equipada, como o jogador a leva para a arena.
@@ -237,10 +262,39 @@ mod tests {
     }
 
     #[test]
+    fn iscas_sao_um_consumivel_com_efeito_proprio() {
+        let p = consumable_profile("decoy_flare").unwrap();
+        assert!(matches!(p.effect, ConsumableEffect::DeployDecoys));
+    }
+
+    #[test]
+    fn decoy_slot_acha_as_iscas_em_qualquer_posicao() {
+        let b = cinto(&[("repair_kit", 1), ("decoy_flare", 2)]);
+        assert_eq!(decoy_slot(&b), Some(1));
+    }
+
+    #[test]
+    fn decoy_slot_ignora_slot_sem_carga() {
+        let mut b = cinto(&[("decoy_flare", 1)]);
+        assert_eq!(decoy_slot(&b), Some(0));
+        let _ = b.use_slot(0);
+        assert_eq!(decoy_slot(&b), None, "sem carga não há iscas para soltar");
+    }
+
+    #[test]
+    fn sem_iscas_no_cinto_nao_ha_slot() {
+        let b = cinto(&[("repair_kit", 3)]);
+        assert_eq!(decoy_slot(&b), None);
+    }
+
+    #[test]
     fn cada_consumivel_tem_vfx_proprio() {
         // Se os dois desenhassem igual, o jogador não saberia qual usou.
-        let r = consumable_profile("repair_kit").unwrap();
-        let s = consumable_profile("shield_cell").unwrap();
-        assert_ne!(r.vfx, s.vfx);
+        let vfxs: Vec<u8> = ["repair_kit", "shield_cell", "decoy_flare"]
+            .iter()
+            .map(|id| consumable_profile(id).unwrap().vfx)
+            .collect();
+        let unicos: std::collections::HashSet<u8> = vfxs.iter().copied().collect();
+        assert_eq!(unicos.len(), vfxs.len(), "cada carga precisa desenhar diferente");
     }
 }

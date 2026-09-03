@@ -54,6 +54,17 @@ INSERT INTO items (code, kind, name, description, base_price, currency, stackabl
  'Protótipo instável. Empuxo absurdo, assinatura enorme.',
  8600, 'dark_matter', FALSE, '{"templateId":"engine_void","tier":5}'),
 
+-- ------------------------------------------------- Peças (torpedos)
+-- Lançadores teleguiados. Ocupam um slot à parte da arma primária e têm
+-- tecla própria: perseguem sozinhos, mas há quatro formas de escapar —
+-- manobrar, dobra, iscas de dispersão, ou abatê-los a tiro.
+('torpedo_seeker', 'mod_part', 'Torpedo Perseguidor',
+ 'Vira bem e persegue longe, mas é frágil e tem pouco fôlego.',
+ 5400, 'credits', FALSE, '{"templateId":"torpedo_seeker","tier":4}'),
+('torpedo_heavy', 'mod_part', 'Torpedo Pesado',
+ 'Dói muito e aguenta tiro. Vira mal: quem reagir cedo sai da curva.',
+ 9200, 'credits', FALSE, '{"templateId":"torpedo_heavy","tier":5}'),
+
 -- --------------------------------------------------- Peças (dobra)
 -- Especializam o motor de dobra da tecla 1. As três atacam eixos
 -- diferentes do mesmo sistema, para que a escolha seja de estilo e não
@@ -120,7 +131,10 @@ INSERT INTO items (code, kind, name, description, base_price, currency, stackabl
  120, 'credits', TRUE, '{"tier":1}'),
 ('shield_cell', 'consumable', 'Célula de Escudo',
  'Recarga instantânea do escudo. Uma carga.',
- 260, 'credits', TRUE, '{"tier":2}')
+ 260, 'credits', TRUE, '{"tier":2}'),
+('decoy_flare', 'consumable', 'Iscas de Dispersão',
+ 'Confunde rastreadores de torpedo. A saída sem gastar a dobra.',
+ 900, 'credits', TRUE, '{"templateId":"decoy_flare","tier":2}')
 
 ON CONFLICT (code) DO UPDATE SET
   kind        = EXCLUDED.kind,

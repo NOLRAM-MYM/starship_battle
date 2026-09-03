@@ -30,7 +30,7 @@ export const ProjectileTag = defineComponent();
 
 export interface RemoteMeta {
   serverId: number;
-  kind: 'Ship' | 'Projectile';
+  kind: 'Ship' | 'Projectile' | 'Torpedo';
   displayName: string | null;
   hpRatio: number | null;
   /** Quaternion completo: rotX, rotY, rotZ, rotW. */
@@ -48,6 +48,21 @@ export interface RemoteMeta {
    * snapshot, mas arma e carga não mudam durante o voo do projétil.
    */
   shot: ShotLook | null;
+  /**
+   * Dados do torpedo, quando a entidade é um.
+   *
+   * `locked` é o que decide o alerta: um torpedo que ainda persegue
+   * exige reação, um que perdeu a trava só precisa ser evitado.
+   */
+  torpedo: TorpedoLook | null;
+}
+
+/** Torpedo em voo, para o renderizador e o alerta. */
+export interface TorpedoLook {
+  dir: [number, number, number];
+  radius: number;
+  hpRatio: number;
+  locked: boolean;
 }
 
 /** Arma e carga de um disparo, para o renderizador. */
@@ -90,6 +105,8 @@ export function applySnapshot(snap: SnapshotData, receivedAt?: number): void {
       addComponent(world, Transform, eid);
       addComponent(world, RemoteTag, eid);
       if (e.kind === 'Ship') addComponent(world, ShipTag, eid);
+      // Torpedo entra como projétil no ECS: o renderizador o distingue
+      // pelo payload, e ele se move igual quadro a quadro.
       else addComponent(world, ProjectileTag, eid);
       byServerId.set(e.id, eid);
       meta.set(eid, {
@@ -100,6 +117,7 @@ export function applySnapshot(snap: SnapshotData, receivedAt?: number): void {
         quat: [e.rot[0], e.rot[1], e.rot[2], e.rot[3]],
         vel: [e.vel[0], e.vel[1], e.vel[2]],
         shot: e.payload?.type === 'Projectile' ? { ...e.payload.payload } : null,
+        torpedo: e.payload?.type === 'Torpedo' ? { ...e.payload.payload } : null,
       });
       if (e.display_name) nameLabel.set(e.id, e.display_name);
       console.info('[remoteShips] nova entidade', e.id, e.kind, e.display_name);

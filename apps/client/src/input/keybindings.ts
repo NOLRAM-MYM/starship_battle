@@ -28,6 +28,8 @@ export type GameAction =
   | 'skill3'
   | 'consumable1'
   | 'consumable2'
+  | 'launchTorpedo'
+  | 'deployDecoys'
   | 'cycleTarget'
   | 'toggleGravityLines'
   | 'toHangar';
@@ -61,6 +63,8 @@ export const ACTIONS: readonly ActionMeta[] = [
   { action: 'skill3', label: 'Habilidade 3 — Reparo', group: 'Combate' },
   { action: 'consumable1', label: 'Consumível 1', group: 'Combate' },
   { action: 'consumable2', label: 'Consumível 2', group: 'Combate' },
+  { action: 'launchTorpedo', label: 'Torpedo (no alvo travado)', group: 'Combate' },
+  { action: 'deployDecoys', label: 'Iscas de dispersão', group: 'Combate' },
   { action: 'cycleTarget', label: 'Trocar de alvo', group: 'Interface' },
   {
     action: 'toggleGravityLines',
@@ -95,6 +99,11 @@ export const DEFAULT_KEYMAP: Keymap = {
   // e o consumível é decidido no mesmo instante que uma habilidade.
   consumable1: 'Digit4',
   consumable2: 'Digit5',
+  // R e F ficam sob os dedos que não estão em WASD: as duas são reações
+  // de fração de segundo, e obrigar a mão a sair da fileira de voo para
+  // soltar iscas anularia a defesa.
+  launchTorpedo: 'KeyR',
+  deployDecoys: 'KeyF',
   cycleTarget: 'Tab',
   toggleGravityLines: 'KeyG',
   toHangar: 'Escape',

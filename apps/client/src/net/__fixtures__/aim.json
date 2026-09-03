@@ -1,0 +1,37 @@
+{
+  "parado": {
+    "input": { "shooterPos": [0,0,0], "shooterVel": [0,0,0], "targetPos": [0,0,200], "targetVel": [0,0,0], "projectileSpeed": 200, "gravity": [0,0,0], "projectileTtl": 4 },
+    "leadPoint": [0,0,200],
+    "timeOfFlight": 1,
+    "difficulty": 0.0375,
+    "reachable": true
+  },
+  "cruzando": {
+    "input": { "shooterPos": [0,0,0], "shooterVel": [0,0,0], "targetPos": [0,0,400], "targetVel": [70,0,0], "projectileSpeed": 200, "gravity": [0,0,0], "projectileTtl": 4 },
+    "leadPoint": [149.31552,0,400],
+    "timeOfFlight": 2.1348016,
+    "difficulty": 0.58005506,
+    "reachable": true
+  },
+  "com_gravidade": {
+    "input": { "shooterPos": [0,0,0], "shooterVel": [0,0,0], "targetPos": [0,0,300], "targetVel": [0,0,0], "projectileSpeed": 180, "gravity": [0,-40,0], "projectileTtl": 4 },
+    "leadPoint": [0,57.603107,300],
+    "timeOfFlight": 1.6971021,
+    "difficulty": 0.41364133,
+    "reachable": true
+  },
+  "nave_em_movimento": {
+    "input": { "shooterPos": [10,5,-20], "shooterVel": [30,0,60], "targetPos": [120,40,500], "targetVel": [-25,10,15], "projectileSpeed": 240, "gravity": [0,-18,5], "projectileTtl": 3 },
+    "leadPoint": [18.925346,88.223755,409.01184],
+    "timeOfFlight": 1.8210664,
+    "difficulty": 0.94105333,
+    "reachable": true
+  },
+  "fora_de_alcance": {
+    "input": { "shooterPos": [0,0,0], "shooterVel": [0,0,0], "targetPos": [0,0,5000], "targetVel": [0,0,0], "projectileSpeed": 200, "gravity": [0,0,0], "projectileTtl": 4 },
+    "leadPoint": [0,0,5000],
+    "timeOfFlight": 25,
+    "difficulty": 1,
+    "reachable": false
+  }
+}

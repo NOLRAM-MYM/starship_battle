@@ -69,6 +69,22 @@ export const COMPONENT_LIBRARY: UiComponentTemplate[] = [
     stats: { thrust: 260, stealth: -0.12 },
   },
 
+  // ---------- Torpedos ----------
+  // Ocupam slot de arma, mas têm tecla própria (R) e perseguem o alvo
+  // travado. Existem quatro formas de escapar deles — manobrar, dobra,
+  // iscas de dispersão, ou abatê-los a tiro —, e é isso que os torna
+  // uma ameaça administrável em vez de um imposto.
+  {
+    id: 'torpedo_seeker', name: 'Torpedo Perseguidor', kind: 'Weapon', tier: 4, mass: 22, cost: 5400,
+    blurb: 'Vira bem e persegue longe, mas é frágil e tem pouco fôlego.',
+    stats: { damage: 140, fireRate: 0.11 },
+  },
+  {
+    id: 'torpedo_heavy', name: 'Torpedo Pesado', kind: 'Weapon', tier: 5, mass: 44, cost: 9200,
+    blurb: 'Dói muito e aguenta tiro. Vira mal: quem reagir cedo sai da curva.',
+    stats: { damage: 380, fireRate: 0.11 },
+  },
+
   // ---------- Armas ----------
   {
     id: 'railgun_s', name: 'Canhão Linear S', kind: 'Weapon', tier: 1, mass: 20, cost: 400,

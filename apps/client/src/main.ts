@@ -36,6 +36,8 @@ import { mountShopScreen } from './ui/ShopScreen';
 import { mountKeybindScreen } from './ui/KeybindScreen';
 import { connect } from './net/client';
 import { chargeMultiplier, primaryWeapon } from './data/weapons';
+import { aimBand, aimBandColor, aimBandLabel, solveAim } from './game/aim';
+import { gravityTotal } from './game/gravity';
 import { fetchProgression, skillNodeIds } from './net/progressionApi';
 import { equippedFromInventory } from './data/consumables';
 import { fetchInventory, fetchItems } from './net/economyApi';
@@ -525,6 +527,7 @@ async function bootstrap(): Promise<void> {
           // montar os marcos, porque só agora sabemos onde eles estão.
           ensureLandmarks(worldSeed, msg.payload.bodies);
           celestialBodies = msg.payload.bodies;
+          constanteG = msg.payload.gravityConstant;
           // As constantes vêm do servidor: a previsão de trajetória usa
           // exatamente a mesma física.
           if (!gravityViz) {
@@ -628,7 +631,11 @@ async function bootstrap(): Promise<void> {
     const input = createInputController(keymap);
     input.attach();
     activeInput = input;
-    const inputLoop = startInputLoop(net, input, 30);
+    const inputLoop = startInputLoop(net, input, 30, {
+      // O torpedo persegue o alvo TRAVADO (Tab). Sem alvo, a tecla não
+      // faz nada — o servidor precisa saber em quem.
+      lockedTarget: () => lockedTargetId,
+    });
 
     // Tecla de saída, além do botão do HUD.
     input.onAction('toHangar', () => returnToHangar());
@@ -681,8 +688,17 @@ async function bootstrap(): Promise<void> {
 
     // --- Estado do loop ---
     let celestialBodies: readonly ServerBody[] = [];
+    // Constante do setor, vinda do servidor. A mira usa exatamente a
+    // mesma que a física, senão a curva prevista seria plausível e
+    // errada.
+    let constanteG = 0.55;
     let gravityViz: GravityVizHandle | null = null;
     const forward = new THREE.Vector3(0, 0, -1);
+    // Reaproveitado a cada quadro para projetar o ponto de mira: alocar
+    // um Vector3 por quadro pressiona o coletor à toa.
+    const miraVec = new THREE.Vector3();
+    const camDir = new THREE.Vector3();
+    const paraMira = new THREE.Vector3();
     const shipPos = new THREE.Vector3();
     const shipQuat = new THREE.Quaternion();
     const shipVel = new THREE.Vector3();
@@ -825,6 +841,18 @@ async function bootstrap(): Promise<void> {
           celestialBodies,
         );
 
+
+      // --- Torpedos perseguindo o jogador ---
+      //
+      // Contados a partir do snapshot: o payload traz `locked`, e um
+      // torpedo que já perdeu a trava não deve mais alarmar.
+      let perseguindo = 0;
+      for (const eid of getAllRemoteEntities().values()) {
+        const m = getRemoteMeta(eid);
+        if (m?.torpedo?.locked) perseguindo += 1;
+      }
+      hudState.incomingTorpedoes = perseguindo;
+
         hudState.position = { x: shipPos.x, y: shipPos.y, z: shipPos.z };
         hudState.heading = Math.atan2(forward.x, -forward.z);
         const contacts = collectContacts();
@@ -848,6 +876,108 @@ async function bootstrap(): Promise<void> {
           hudState.targetId = null;
           hudState.targetName = null;
         }
+
+      // --- Mira contra o alvo efetivo ---
+      //
+      // Duas correções que ninguém faz de cabeça: onde o alvo estará
+      // quando o projétil chegar, e o quanto a gravidade encurva o tiro
+      // no caminho. Ambas dependem do tempo de voo, que depende delas.
+      // A conta sai de `game/aim.ts`, que espelha o servidor com fixture
+      // dourada — divergir aqui faria a mira apontar errado em silêncio.
+      hudState.aim = null;
+      // Segue `hudState.targetId`, não `lockedTargetId`: o painel já
+      // faz mira automática no melhor contato quando não há trava, e
+      // exigir Tab aqui produzia a situação absurda de o HUD mostrar um
+      // alvo e a mira simplesmente não existir. Por isso este bloco fica
+      // DEPOIS da resolução do alvo, e não antes.
+      if (armaPrimaria && target) {
+        // A posição vem do CONTATO já resolvido, não de uma nova varredura
+        // das naves remotas: o alvo automático também escolhe entidades de
+        // mundo (asteroides, destroços), e procurá-lo só entre naves fazia
+        // a mira sumir justamente quando o HUD mostrava um alvo.
+        //
+        // A velocidade só existe para naves; corpos estáticos entram com
+        // zero, que é a verdade sobre eles.
+        let alvoEid: number | undefined;
+        for (const eid of getAllRemoteEntities().values()) {
+          const m = getRemoteMeta(eid);
+          if (m && m.serverId === target.id) {
+            alvoEid = eid;
+            break;
+          }
+        }
+        const metaAlvo = alvoEid !== undefined ? getRemoteMeta(alvoEid) : undefined;
+        {
+          const alvoPos: [number, number, number] = [target.pos.x, target.pos.y, target.pos.z];
+          const alvoVel: [number, number, number] = metaAlvo?.vel ?? [0, 0, 0];
+          // Gravidade no MEIO do trecho: usar a do atirador subestima a
+          // curva quando o alvo está mais fundo no poço, e usar a do
+          // alvo superestima quando ele está mais raso.
+          const meio = {
+            x: (shipPos.x + alvoPos[0]) / 2,
+            y: (shipPos.y + alvoPos[1]) / 2,
+            z: (shipPos.z + alvoPos[2]) / 2,
+          };
+          const g = gravityTotal(celestialBodies, meio, constanteG);
+          const sol = solveAim({
+            shooterPos: [shipPos.x, shipPos.y, shipPos.z],
+            shooterVel: [shipVel.x, shipVel.y, shipVel.z],
+            targetPos: alvoPos,
+            targetVel: alvoVel,
+            projectileSpeed: armaPrimaria.velocidade,
+            gravity: [g.x, g.y, g.z],
+            projectileTtl: armaPrimaria.alcanceSegundos,
+          });
+
+          // Só desenha se o ponto estiver À FRENTE da câmera: projetar
+          // um ponto atrás dela produz coordenadas espelhadas, e a mira
+          // apareceria no lado errado da tela.
+          //
+          // A checagem é por produto escalar com a direção da câmera, e
+          // não pelo `z` do espaço normalizado: com o plano distante em
+          // 1e6, todo alvo de combate mapeia para z ≈ 0.999, e um teste
+          // `z < 1` fica a um arredondamento de falhar.
+          //
+          // `updateMatrixWorld` ANTES de projetar não é zelo: `project`
+          // usa `matrixWorldInverse`, que só é recalculada dentro de
+          // `render()` — e este bloco roda antes. Com a inversa do
+          // quadro anterior, a projeção saía fora da faixa [-1,1] (vi
+          // ndcX = -108) e a mira ia parar a dezenas de milhares de
+          // pixels da tela: presente no DOM, invisível na prática.
+          miraVec.set(sol.leadPoint[0], sol.leadPoint[1], sol.leadPoint[2]);
+          renderer.camera.updateMatrixWorld();
+          camDir.set(0, 0, -1).applyQuaternion(renderer.camera.quaternion);
+          paraMira.copy(miraVec).sub(renderer.camera.position);
+          const aFrente = paraMira.dot(camDir) > 0;
+          miraVec.project(renderer.camera);
+          // Fora do frustum lateral: o alvo está no campo, mas a mira
+          // caiu atrás da borda da tela.
+          // Fora do campo lateral a mira é PRESA À BORDA em vez de
+          // sumir. Esconder seria o comportamento óbvio e o errado: o
+          // cone de travamento (~102°) é bem mais largo que o campo da
+          // câmera (~70°), então o alvo travado passa boa parte do
+          // tempo fora da tela — e é justamente aí que o jogador
+          // precisa saber para que lado virar.
+          const naTela = Math.abs(miraVec.x) <= 1 && Math.abs(miraVec.y) <= 1;
+          if (aFrente) {
+            const faixa = aimBand(sol.difficulty, sol.reachable);
+            const larg = renderer.three.domElement.clientWidth;
+            const alt = renderer.three.domElement.clientHeight;
+            // Margem para o marcador não ficar meio fora da tela.
+            const m = 0.94;
+            const nx = naTela ? miraVec.x : Math.max(-m, Math.min(m, miraVec.x));
+            const ny = naTela ? miraVec.y : Math.max(-m, Math.min(m, miraVec.y));
+            hudState.aim = {
+              x: (nx * 0.5 + 0.5) * larg,
+              y: (-ny * 0.5 + 0.5) * alt,
+              band: faixa,
+              label: naTela ? aimBandLabel(faixa) : 'ALVO FORA DA TELA',
+              color: aimBandColor(faixa),
+              offscreen: !naTela,
+            };
+          }
+        }
+      }
       }
 
       renderer.render();

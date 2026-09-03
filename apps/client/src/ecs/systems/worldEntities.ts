@@ -84,8 +84,9 @@ function applyPayloadToKind(
       // porque expiram em segundos e precisam de efeito animado.
       return null;
     case 'Projectile':
-      // Idem: projéteis vivem no renderizador de entidades remotas, que
-      // já os interpola quadro a quadro.
+    case 'Torpedo':
+      // Idem: projéteis e torpedos vivem no renderizador de entidades
+      // remotas, que já os interpola quadro a quadro.
       return null;
   }
 }

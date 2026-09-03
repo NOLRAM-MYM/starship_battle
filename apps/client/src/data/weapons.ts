@@ -30,6 +30,10 @@ export interface WeaponUiInfo {
   danoMax: number;
   /** Família visual do projétil. */
   visual: number;
+  /** Velocidade do projétil (u/s). Alimenta a solução de mira. */
+  velocidade: number;
+  /** Tempo de vida do projétil (s) — o alcance efetivo. */
+  alcanceSegundos: number;
 }
 
 const ARMAS: Record<string, WeaponUiInfo> = {
@@ -38,6 +42,8 @@ const ARMAS: Record<string, WeaponUiInfo> = {
     tempoDeCarga: 0.9,
     danoMax: 2.6,
     visual: WEAPON_VISUAL.Kinetic,
+    velocidade: 190,
+    alcanceSegundos: 2.6,
   },
   laser_burst: {
     nome: 'Laser em Rajada',
@@ -45,18 +51,24 @@ const ARMAS: Record<string, WeaponUiInfo> = {
     tempoDeCarga: 0,
     danoMax: 1,
     visual: WEAPON_VISUAL.Laser,
+    velocidade: 240,
+    alcanceSegundos: 1.8,
   },
   plasma_m: {
     nome: 'Canhão de Plasma',
     tempoDeCarga: 1.6,
     danoMax: 3.0,
     visual: WEAPON_VISUAL.Plasma,
+    velocidade: 120,
+    alcanceSegundos: 3.4,
   },
   lance_singular: {
     nome: 'Lança Singular',
     tempoDeCarga: 2.5,
     danoMax: 3.4,
     visual: WEAPON_VISUAL.Lance,
+    velocidade: 320,
+    alcanceSegundos: 4.0,
   },
 };
 

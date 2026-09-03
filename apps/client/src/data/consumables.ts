@@ -29,6 +29,11 @@ const CONSUMIVEIS: Record<string, ConsumableUiInfo> = {
     descricao: 'Restaura casco na hora. A skill de Reparo cura devagar; a carga é imediata.',
     vfx: 0,
   },
+  decoy_flare: {
+    nome: 'Iscas',
+    descricao: 'Confunde o rastreador de um torpedo. A saída sem gastar a dobra.',
+    vfx: 2,
+  },
   shield_cell: {
     nome: 'Célula Escudo',
     descricao: 'Recarrega o escudo na hora, sem esperar a regeneração.',

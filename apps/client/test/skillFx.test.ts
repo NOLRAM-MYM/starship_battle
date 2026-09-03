@@ -204,12 +204,13 @@ describe('consumíveis equipados', () => {
       const info = consumableUiInfo(id)!;
       expect(info.nome, id).toBeTruthy();
       expect(info.descricao, id).toBeTruthy();
-      expect([0, 1], id).toContain(info.vfx);
+      expect([0, 1, 2], id).toContain(info.vfx);
     }
   });
 
-  it('os dois consumíveis têm efeitos visuais distintos', () => {
+  it('cada consumível tem um efeito visual distinto', () => {
     // Se desenhassem igual, o jogador não saberia qual carga gastou.
-    expect(consumableUiInfo('repair_kit')!.vfx).not.toBe(consumableUiInfo('shield_cell')!.vfx);
+    const vfxs = consumableIds().map((id) => consumableUiInfo(id)!.vfx);
+    expect(new Set(vfxs).size).toBe(vfxs.length);
   });
 });

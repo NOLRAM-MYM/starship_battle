@@ -47,6 +47,15 @@ export interface InputState {
   skill: 'Dash' | 'Emp' | 'Repair' | null;
   /** Edge-trigger: índice do slot de consumível pedido (0 ou 1). */
   useConsumable: number | null;
+  /**
+   * Edge-trigger: pedido de lançar torpedo.
+   *
+   * O ALVO não vem daqui — quem sabe qual entidade está travada é o laço
+   * do jogo. O controlador só relata que a tecla foi apertada.
+   */
+  launchTorpedo: boolean;
+  /** Edge-trigger: soltar iscas de dispersão. */
+  deployDecoys: boolean;
 }
 
 export interface InputController {
@@ -83,6 +92,8 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
   let pendingDefend = false;
   let pendingSkill: 'Dash' | 'Emp' | 'Repair' | null = null;
   let pendingConsumable: number | null = null;
+  let pendingTorpedo = false;
+  let pendingDecoys = false;
 
   function emit(action: GameAction): void {
     for (const cb of listeners.get(action) ?? []) cb();
@@ -110,6 +121,8 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
       if (skill) pendingSkill = skill;
       if (action === 'consumable1') pendingConsumable = 0;
       if (action === 'consumable2') pendingConsumable = 1;
+      if (action === 'launchTorpedo') pendingTorpedo = true;
+      if (action === 'deployDecoys') pendingDecoys = true;
       emit(action);
     }
     held.add(action);
@@ -135,6 +148,8 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
     // pedido e não consumido: gastaria uma carga sozinho.
     fireHeldSince = null;
     pendingConsumable = null;
+    pendingTorpedo = false;
+    pendingDecoys = false;
   }
 
   let attached: { target: Window } | null = null;
@@ -176,6 +191,10 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
       pendingSkill = null;
       const useConsumable = pendingConsumable;
       pendingConsumable = null;
+      const launchTorpedo = pendingTorpedo;
+      pendingTorpedo = false;
+      const deployDecoys = pendingDecoys;
+      pendingDecoys = false;
 
       return {
         steer: axis('yawLeft', 'yawRight'),
@@ -189,6 +208,8 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
         defend,
         skill,
         useConsumable,
+        launchTorpedo,
+        deployDecoys,
       };
     },
 

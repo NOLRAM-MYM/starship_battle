@@ -128,6 +128,58 @@ export function chargeScale(charge: number): number {
  * o núcleo; `charge` é usado para o que é puramente visual — cor, halo
  * e comprimento da cauda.
  */
+/**
+ * Monta o objeto 3D de um torpedo teleguiado.
+ *
+ * Deliberadamente diferente de qualquer projétil: corpo alongado, anel
+ * de propulsão e cor de alerta. Um torpedo confundido com um tiro comum
+ * seria ignorado até acertar — e as quatro defesas contra ele só servem
+ * para quem o reconhece a tempo.
+ *
+ * `locked` muda a aparência porque muda a decisão: um torpedo que ainda
+ * persegue exige reação, um que perdeu a trava só precisa ser evitado.
+ */
+export function createTorpedoVisual(radius: number, locked: boolean): ProjectileVisual {
+  const group = new THREE.Group();
+  const disposables: Array<{ dispose(): void }> = [];
+  const cor = locked ? 0xff5f6d : 0x8a929e;
+
+  // Corpo: cápsula bem alongada no eixo de voo.
+  const corpo = new THREE.CapsuleGeometry(radius * 0.5, radius * 3.2, 6, 8);
+  corpo.rotateX(Math.PI / 2);
+  disposables.push(corpo);
+  const matCorpo = new THREE.MeshBasicMaterial({ color: cor, fog: false });
+  disposables.push(matCorpo);
+  group.add(new THREE.Mesh(corpo, matCorpo));
+
+  // Anel de propulsão atrás — leitura de "isto tem motor próprio".
+  const anel = new THREE.TorusGeometry(radius * 0.7, radius * 0.16, 6, 12);
+  disposables.push(anel);
+  const matAnel = new THREE.MeshBasicMaterial({
+    color: locked ? 0xffb347 : 0x4a5568,
+    transparent: true,
+    opacity: 0.9,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    fog: false,
+  });
+  disposables.push(matAnel);
+  const anelMesh = new THREE.Mesh(anel, matAnel);
+  anelMesh.position.z = -radius * 2.0;
+  group.add(anelMesh);
+
+  // Só um torpedo travado pulsa: é o sinal de urgência.
+  const luz = new THREE.PointLight(cor, locked ? 10 : 3, 40);
+  group.add(luz);
+
+  return {
+    group,
+    dispose(): void {
+      for (const d of disposables) d.dispose();
+    },
+  };
+}
+
 export function createProjectileVisual(shot: ShotLook | null): ProjectileVisual {
   const fam = familyOf(shot?.visual ?? 0);
   const carga = Math.min(1, Math.max(0, shot?.charge ?? 0));

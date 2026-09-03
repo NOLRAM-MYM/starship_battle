@@ -54,14 +54,15 @@ describe('protocol roundtrip', () => {
       type: 'Input',
       payload: {
         steer: 0.25, pitch: -0.5, roll: 0.75, thrust: 1.0,
-        fire: true, fireCharge: 1.5, skill: null, useConsumable: null,
+        fire: true, fireCharge: 1.5, skill: null, useConsumable: null, launchTorpedo: null, deployDecoys: false,
       },
     };
     const bytes = encodeClientMsg(msg);
     // v6: u32 variante + f32 steer/pitch/roll/thrust + u8 fire
     //     + f32 fireCharge + tag Option da skill.
     // v9: + tag Option do slot de consumível.
-    expect(bytes.byteLength).toBe(4 + 4 * 4 + 1 + 4 + 1 + 1);
+    // v10: + tag Option do alvo do torpedo + u8 das iscas.
+    expect(bytes.byteLength).toBe(4 + 4 * 4 + 1 + 4 + 1 + 1 + 1 + 1);
 
     // Confere a ORDEM dos eixos: se ela divergir do enum em Rust, o
     // servidor lê pitch como roll e a nave voa errado sem erro nenhum.

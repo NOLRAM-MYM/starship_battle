@@ -1,6 +1,8 @@
 //! Definições de componentes de nave e ship loadout.
 
+pub mod torpedo;
 pub mod warp;
+pub mod aim;
 pub mod consumables;
 pub mod skills;
 pub mod weapons;

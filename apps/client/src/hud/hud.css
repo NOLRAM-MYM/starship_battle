@@ -599,3 +599,86 @@
 .hud-consumable.empty .hud-consumable-count {
   color: rgba(255, 255, 255, 0.5);
 }
+
+/* ---------- Marcador de mira ---------- */
+/* Fica ONDE ATIRAR, que não é onde o nariz aponta sempre que o alvo se
+   move ou há gravidade. O tamanho muda com a dificuldade além da cor:
+   um anel largo comunica "aposta" mesmo para quem não distingue as
+   cores, e é a mesma regra usada nos projéteis e nas habilidades. */
+.hud-aim {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border: 2px solid var(--accent, #4ec9ff);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms var(--ease), width 140ms var(--ease), height 140ms var(--ease);
+}
+.hud-aim.active { opacity: 0.9; }
+
+/* Quanto mais difícil, maior o anel: a incerteza fica visível. */
+.hud-aim.easy     { width: 20px; height: 26px; margin: -13px 0 0 -10px; }
+.hud-aim.moderate { width: 30px; height: 30px; margin: -15px 0 0 -15px; }
+.hud-aim.hard     { width: 44px; height: 44px; margin: -22px 0 0 -22px; border-style: dashed; }
+.hud-aim.extreme  { width: 58px; height: 58px; margin: -29px 0 0 -29px; border-style: dotted; }
+
+.hud-aim-label {
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%);
+  margin-top: 4px;
+  white-space: nowrap;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/* ---------- Alerta de torpedo ---------- */
+/* Alto e centrado: é a informação mais urgente da tela quando aparece.
+   Sem ela, um torpedo teleguiado é morte sem explicação — ele vem de
+   fora do campo de visão quase sempre, e as quatro defesas só servem
+   para quem sabe que precisa delas. */
+.hud-torpedo-warn {
+  position: absolute;
+  top: 15%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 14px;
+  border: 1px solid var(--danger, #ff5f6d);
+  border-radius: 3px;
+  background: rgba(60, 8, 14, 0.72);
+  color: var(--danger, #ff5f6d);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms var(--ease);
+}
+.hud-torpedo-warn.active {
+  opacity: 1;
+  animation: torpedo-alerta 620ms ease-in-out infinite;
+}
+@keyframes torpedo-alerta {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.7); }
+}
+
+/* Mira presa à borda: é uma DIREÇÃO, não o ponto de impacto. Some o
+   preenchimento e pisca devagar, para não ser confundida com a mira
+   real quando o alvo volta ao campo de visão. */
+.hud-aim.offscreen {
+  border-style: dashed;
+  opacity: 0.6;
+  animation: mira-borda 900ms ease-in-out infinite;
+}
+@keyframes mira-borda {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}

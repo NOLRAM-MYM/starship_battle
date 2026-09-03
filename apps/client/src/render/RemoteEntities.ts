@@ -24,7 +24,11 @@ import {
 } from '../ecs/systems/remoteShips';
 import { createShipMesh, type ChassisSpec, type ShipMesh } from './ShipMesh';
 import type { VfxSystem } from './effects';
-import { createProjectileVisual, type ProjectileVisual } from './ProjectileLook';
+import {
+  createProjectileVisual,
+  createTorpedoVisual,
+  type ProjectileVisual,
+} from './ProjectileLook';
 import { createSkillFx, type SkillFxHandle, type SkillFxKind } from './SkillFx';
 
 /** Cores por relação com o jogador. */
@@ -214,7 +218,12 @@ export class RemoteEntityRenderer {
     // A aparência vem do servidor (arma + carga). Sem isso todo tiro
     // era a mesma esfera amarela e nem a arma nem o tempo de gatilho
     // apareciam em combate.
-    const shot = createProjectileVisual(meta.shot);
+    // Torpedo tem silhueta própria: confundi-lo com um tiro comum faria
+    // o jogador ignorá-lo até acertar, e as defesas só servem para quem
+    // o reconhece a tempo.
+    const shot = meta.torpedo
+      ? createTorpedoVisual(meta.torpedo.radius, meta.torpedo.locked)
+      : createProjectileVisual(meta.shot);
     group.add(shot.group);
 
     return {

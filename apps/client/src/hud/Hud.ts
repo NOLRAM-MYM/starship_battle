@@ -25,6 +25,23 @@ export interface ConsumableState {
   charges: number;
 }
 
+/** Mira projetada na tela. */
+export interface AimHudState {
+  /** Posição em pixels dentro do canvas. */
+  x: number;
+  y: number;
+  /** Faixa de dificuldade, que decide cor E tamanho. */
+  band: 'easy' | 'moderate' | 'hard' | 'extreme';
+  label: string;
+  color: string;
+  /**
+   * `true` quando o ponto de impacto está fora da tela e o marcador foi
+   * preso à borda. O jogador precisa saber que aquilo é uma DIREÇÃO,
+   * não o ponto exato onde atirar.
+   */
+  offscreen: boolean;
+}
+
 export interface SkillState {
   id: ActiveSkill;
   cooldownEnd: number;
@@ -48,6 +65,23 @@ export interface HudState {
    * NADA no jogo indicando que estavam equipados, nem tecla para usar.
    */
   consumables: ConsumableState[];
+  /**
+   * Mira contra o alvo travado, em coordenadas de TELA (px), ou null.
+   *
+   * Acertar exigia adivinhar duas correções ao mesmo tempo: onde o alvo
+   * estará quando o projétil chegar, e o quanto a gravidade vai encurvar
+   * o tiro. A conta é feita de verdade e o resultado aparece aqui.
+   */
+  aim: AimHudState | null;
+  /**
+   * Torpedos perseguindo o jogador AGORA.
+   *
+   * Sem este aviso, um torpedo teleguiado seria uma morte sem
+   * explicação: ele vem de fora do campo de visão na maior parte das
+   * vezes, e as quatro defesas só servem para quem sabe que precisa
+   * delas.
+   */
+  incomingTorpedoes: number;
   /** Callsign exibido no painel de vitais. */
   callsign: string;
   /** Contatos para o radar — atualizados pelo loop a partir do snapshot. */
@@ -103,6 +137,8 @@ export function createHudState(): HudState {
     money: 0,
     targetName: null,
     consumables: [],
+    aim: null,
+    incomingTorpedoes: 0,
     skills: [
       { id: 'Dash', cooldownEnd: 0, cooldownTotal: 5000 },
       { id: 'Emp', cooldownEnd: 0, cooldownTotal: 10000 },
@@ -352,12 +388,26 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
 
   // ---------- Retículo, vinheta e alertas ----------
   const reticle = el('div', 'hud-reticle');
+
+  // ---------- Marcador de mira (ponto de impacto previsto) ----------
+  //
+  // Separado do retículo fixo de propósito: o retículo diz para onde o
+  // nariz aponta, este diz para onde ATIRAR. São coisas diferentes
+  // sempre que o alvo se move ou há gravidade, e é exatamente essa
+  // diferença que o jogador precisa ver.
+  const aimMarker = el('div', 'hud-aim');
+  const aimLabel = el('div', 'hud-aim-label');
+  aimMarker.appendChild(aimLabel);
+
+  // ---------- Alerta de torpedo ----------
+  const torpedoWarn = el('div', 'hud-torpedo-warn');
   const vignette = el('div', 'hud-vignette');
   const toasts = el('div', 'hud-toasts');
 
   root.append(
     vitals, target, radar.element, credits, actions,
-    compass.element, exitBtn, gravBtn, gravity, chargeWrap, reticle, vignette, toasts,
+    compass.element, exitBtn, gravBtn, gravity, chargeWrap, reticle, aimMarker,
+    torpedoWarn, vignette, toasts,
   );
   container.appendChild(root);
 
@@ -404,6 +454,24 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
     // A bússola trabalha em GRAUS; `state.heading` está em radianos.
     const headingDeg = ((state.heading * 180) / Math.PI + 360) % 360;
     compass.update(state.position, headingDeg, state.navPoints, state.navTargetId);
+
+    // ---- Mira ----
+    if (state.aim) {
+      aimMarker.classList.add('active');
+      aimMarker.className = `hud-aim active ${state.aim.band}${state.aim.offscreen ? ' offscreen' : ''}`;
+      aimMarker.style.transform = `translate(${state.aim.x.toFixed(1)}px, ${state.aim.y.toFixed(1)}px)`;
+      aimMarker.style.borderColor = state.aim.color;
+      aimLabel.textContent = state.aim.label;
+      aimLabel.style.color = state.aim.color;
+    } else {
+      aimMarker.className = 'hud-aim';
+    }
+
+    // ---- Alerta de torpedo ----
+    const n = state.incomingTorpedoes;
+    torpedoWarn.classList.toggle('active', n > 0);
+    torpedoWarn.textContent =
+      n > 1 ? `${n} TORPEDOS EM PERSEGUIÇÃO` : n === 1 ? 'TORPEDO EM PERSEGUIÇÃO' : '';
 
     // ---- Consumíveis ----
     state.consumables.forEach((c, idx) => {

@@ -9,7 +9,7 @@
  *   - bool: u8 (0/1)
  */
 
-export const PROTOCOL_VERSION = 9 as const;
+export const PROTOCOL_VERSION = 10 as const;
 /**
  * Precisa bater com `SNAPSHOT_RATE_HZ` do servidor — é o intervalo que a
  * interpolação usa como alvo. O servidor tica a 30Hz e envia snapshot a
@@ -55,6 +55,10 @@ export interface InputMsg {
   fireCharge: number;
   /** Slot de consumível a usar neste tick (0 ou 1), ou null. */
   useConsumable: number | null;
+  /** Entidade contra a qual lançar um torpedo, ou null. */
+  launchTorpedo: number | null;
+  /** Soltar iscas de dispersão neste tick. */
+  deployDecoys: boolean;
   skill: ActiveSkill | null;
 }
 export interface PingMsg {
@@ -79,7 +83,8 @@ export type EntityKind =
   | 'Anomaly'
   | 'Wreck'
   /** Vórtice de dobra: rastro que impulsiona quem entrar (v6). */
-  | 'Vortex';
+  | 'Vortex'
+  | 'Torpedo';
 
 export interface NpcPayload {
   archetype: number;
@@ -119,7 +124,8 @@ export type EntityPayload =
   | { type: 'Anomaly'; payload: AnomalyPayload }
   | { type: 'Wreck'; payload: WreckPayload }
   | { type: 'Vortex'; payload: VortexPayload }
-  | { type: 'Projectile'; payload: ProjectilePayload };
+  | { type: 'Projectile'; payload: ProjectilePayload }
+  | { type: 'Torpedo'; payload: TorpedoPayload };
 
 /**
  * Aparência de um projétil, decidida pelo servidor.
@@ -175,6 +181,18 @@ export interface ConsumableSlot {
  * (cooldown, carga zerada). Um contador mantido só no cliente
  * divergiria na primeira recusa.
  */
+/**
+ * Um torpedo perdeu a trava.
+ *
+ * O motivo importa: o alvo precisa saber QUAL defesa funcionou, senão
+ * não aprende qual usar da próxima vez.
+ */
+export interface TorpedoLockLostMsg {
+  torpedoId: number;
+  /** 0 = alvo em dobra, 1 = iscas, 2 = fora de alcance. */
+  reason: number;
+}
+
 export interface ConsumableUsedMsg {
   entityId: number;
   slot: number;
@@ -210,6 +228,16 @@ export interface WorldChunkData {
 }
 
 /** Tipo de corpo celeste. Mesma ordem do enum em Rust. */
+/** Aparência de um torpedo em voo. */
+export interface TorpedoPayload {
+  dir: [number, number, number];
+  radius: number;
+  /** 0..1 — casco restante, para o alvo decidir se vale atirar nele. */
+  hpRatio: number;
+  /** `true` enquanto persegue alguém. */
+  locked: boolean;
+}
+
 export type BodyKind = 'Star' | 'Planet' | 'GasGiant' | 'Moon' | 'NeutronStar' | 'BlackHole';
 
 /**
@@ -253,6 +281,7 @@ export type ServerMsg =
   | { type: 'XpGained'; payload: XpGainedMsg }
   | { type: 'SkillActivated'; payload: SkillActivatedMsg }
   | { type: 'ConsumableUsed'; payload: ConsumableUsedMsg }
+  | { type: 'TorpedoLockLost'; payload: TorpedoLockLostMsg }
   | { type: 'Vfx'; payload: VfxMsg }
   | { type: 'Pong'; payload: PongMsg }
   | { type: 'Error'; payload: ErrorMsg };
@@ -275,11 +304,14 @@ const SERVER_VARIANT = {
   Error: 9,
   // v9, acrescentada no FIM: as anteriores mantêm a discriminante.
   ConsumableUsed: 10,
+  TorpedoLockLost: 11,
 } as const;
 const ENTITY_KIND = {
   Ship: 0, Projectile: 1, Npc: 2, Asteroid: 3, Anomaly: 4, Wreck: 5,
   // v6: vórtice de dobra.
   Vortex: 6,
+  // v10: torpedo teleguiado.
+  Torpedo: 7,
 } as const;
 /**
  * Variantes de `EntityPayload`.
@@ -303,6 +335,8 @@ const PAYLOAD_VARIANT = {
   Vortex: 4,
   // v7, acrescentada no fim: as anteriores mantêm a discriminante.
   Projectile: 5,
+  // v10.
+  Torpedo: 6,
 } as const;
 
 // --- Encoder binário (apenas o que precisamos emitir) ---
@@ -414,6 +448,8 @@ function kindFromIdx(idx: number): EntityKind {
       return 'Wreck';
     case ENTITY_KIND.Vortex:
       return 'Vortex';
+    case ENTITY_KIND.Torpedo:
+      return 'Torpedo';
     default:
       throw new Error(`[protocol] EntityKind desconhecido: ${idx}`);
   }
@@ -479,6 +515,16 @@ function readPayload(r: BincodeReader): EntityPayload | null {
           visual: r.readU8(),
           charge: r.readF32(),
           radius: r.readF32(),
+        },
+      };
+    case PAYLOAD_VARIANT.Torpedo:
+      return {
+        type: 'Torpedo',
+        payload: {
+          dir: [r.readF32(), r.readF32(), r.readF32()],
+          radius: r.readF32(),
+          hpRatio: r.readF32(),
+          locked: r.readU8() !== 0,
         },
       };
     default:
@@ -600,6 +646,14 @@ export function encodeClientMsg(msg: ClientMsg): Uint8Array {
         w.writeU8(1);
         w.writeU8(msg.payload.useConsumable);
       }
+      // v10: alvo do torpedo e pedido de iscas.
+      if (msg.payload.launchTorpedo === null || msg.payload.launchTorpedo === undefined) {
+        w.writeU8(0);
+      } else {
+        w.writeU8(1);
+        w.writeU32(msg.payload.launchTorpedo);
+      }
+      w.writeBool(msg.payload.deployDecoys);
       break;
     case 'Ping':
       w.writeU32(CLIENT_VARIANT.Ping);
@@ -675,6 +729,11 @@ export function decodeServerMsg(buf: ArrayBuffer): ServerMsg {
           entity_id: r.readU32(),
           skill: readActiveSkill(r),
         },
+      };
+    case SERVER_VARIANT.TorpedoLockLost:
+      return {
+        type: 'TorpedoLockLost',
+        payload: { torpedoId: r.readU32(), reason: r.readU8() },
       };
     case SERVER_VARIANT.ConsumableUsed:
       return {

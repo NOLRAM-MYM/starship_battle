@@ -9,10 +9,10 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::net::protocol::{
-    VFX_EMP, VFX_EXPLOSION_LARGE, VFX_EXPLOSION_SHIP, VFX_IMPACT, VFX_MUZZLE,
+    VFX_DECOY, VFX_EMP, VFX_EXPLOSION_LARGE, VFX_EXPLOSION_SHIP, VFX_IMPACT, VFX_MUZZLE,
 };
 
-use crate::net::protocol::{EntityKind, EntityPayload, ProjectilePayload};
+use crate::net::protocol::{EntityKind, EntityPayload, ProjectilePayload, TorpedoPayload};
 use sim_core::skills::{ActiveSkill, SkillManager};
 
 /// ID autoritativo de uma entidade.
@@ -52,6 +52,10 @@ pub struct Ship {
     pub hull_max: f32,
     pub shield_hp: f32,
     pub shield_max: f32,
+    /// Lançador de torpedos equipado, se houver.
+    pub torpedo: Option<sim_core::ship::torpedo::TorpedoProfile>,
+    /// Espera até poder lançar outro torpedo.
+    pub torpedo_cooldown: f32,
     /// Consumíveis levados para a arena, com as cargas restantes.
     pub belt: sim_core::ship::consumables::ConsumableBelt,
     /// Segundos restantes de paralisia por PEM.
@@ -108,6 +112,8 @@ impl Default for Ship {
             roll_input: 0.0,
             hull_hp: 100.0,
             hull_max: 100.0,
+            torpedo: None,
+            torpedo_cooldown: 0.0,
             belt: Default::default(),
             emp_remaining: 0.0,
             shield_pierce: 0.0,
@@ -197,6 +203,16 @@ pub struct World {
     pub world_seed: u32,
     pub ships: HashMap<EntityId, (Position, Velocity, Rotation, Ship)>,
     pub projectiles: HashMap<EntityId, (Position, Velocity, Projectile)>,
+    /// Torpedos teleguiados em voo.
+    ///
+    /// Coleção separada dos projéteis porque eles têm ESTADO: trava,
+    /// combustível e casco próprio. Misturá-los faria todo laço de
+    /// projétil carregar campos que só um deles usa.
+    pub torpedoes: HashMap<EntityId, (Position, sim_core::ship::torpedo::Torpedo)>,
+    /// Iscas de dispersão ativas: (posição, segundos restantes, dono).
+    ///
+    /// São o que quebra a trava sem gastar a dobra.
+    pub decoys: Vec<(Position, f32, u32)>,
     /// NPCs (entity_id → state). Posição/velocidade/rotação são geridas pelo módulo `npc`.
     pub npcs: HashMap<EntityId, crate::npc::Npc>,
     pub npc_positions: HashMap<EntityId, (Position, Velocity)>,
@@ -325,6 +341,12 @@ impl World {
         let stats = sim_core::ship::weapons::resolve_loadout(template_ids);
         let (warp, ganho) = sim_core::ship::warp::resolve_warp(template_ids);
 
+        // Lançador de torpedos: é uma peça à parte da arma primária,
+        // com tecla própria. Uma nave pode ter as duas.
+        ship.torpedo = template_ids
+            .iter()
+            .find_map(|id| sim_core::ship::torpedo::torpedo_profile(id));
+
         // Skills entram POR CIMA da arma resolvida.
         let mods = sim_core::ship::skills::combat_mods(skill_nodes);
         ship.shield_pierce = mods.shield_pierce;
@@ -367,6 +389,8 @@ impl World {
             roll_input: 0.0,
             hull_hp: 100.0,
             hull_max: 100.0,
+            torpedo: None,
+            torpedo_cooldown: 0.0,
             belt: Default::default(),
             emp_remaining: 0.0,
             shield_pierce: 0.0,
@@ -398,6 +422,7 @@ impl World {
         // de dentro de outra nave. O anel é derivado do `id`, então é
         // determinístico e não precisa de RNG no caminho de spawn.
         const SPAWN_RING: f32 = 120.0;
+
         let ang = (id as f32) * 2.399_963_2; // ângulo áureo: distribui bem
         let pos = Position {
             x: ang.cos() * SPAWN_RING,
@@ -516,6 +541,7 @@ impl World {
         for id in ship_ids {
             let (pos, vel, rot, mut ship) = self.ships[&id].clone();
             ship.fire_cooldown = (ship.fire_cooldown - self.last_dt).max(0.0);
+            ship.torpedo_cooldown = (ship.torpedo_cooldown - self.last_dt).max(0.0);
             // Nave paralisada por PEM não atira. É metade do efeito da
             // habilidade; a outra metade é o empuxo cortado abaixo.
             if ship.pending_fire && ship.fire_cooldown <= 0.0 && ship.emp_remaining <= 0.0 {
@@ -832,6 +858,7 @@ impl World {
         // do laço `self.ships` está emprestado, e o efeito precisa
         // alcançar OUTRAS naves.
         let mut pulsos_emp: Vec<(EntityId, u32, Position)> = Vec::new();
+        let mut iscas_pedidas: Vec<(Position, u32)> = Vec::new();
         let ship_ids: Vec<EntityId> = self.ships.keys().copied().collect();
         for id in ship_ids.iter() {
             let (pos_atual, _, _, mut ship) = self.ships[id].clone();
@@ -851,6 +878,12 @@ impl World {
                         }
                         ConsumableEffect::RestoreShield { amount } => {
                             ship.shield_hp = (ship.shield_hp + amount).min(ship.shield_max);
+                        }
+                        // As iscas entram na fila para depois do laço:
+                        // aqui `self.ships` está emprestado, e soltar
+                        // iscas mexe em `self.decoys`.
+                        ConsumableEffect::DeployDecoys => {
+                            iscas_pedidas.push((pos_atual, ship.owner_player_id));
                         }
                     }
                     self.events.push(crate::net::protocol::ServerMsg::ConsumableUsed {
@@ -897,6 +930,16 @@ impl World {
 
             // Re-insere na collection para salvar o estado
             self.ships.get_mut(id).unwrap().3 = ship;
+        }
+
+        // Iscas pedidas pelos slots numerados (as da tecla F passam por
+        // `deploy_decoys`, que faz a mesma coisa).
+        for (p, dono) in iscas_pedidas {
+            self.decoys.push((p, DECOY_TTL, dono));
+            self.events.push(crate::net::protocol::ServerMsg::Vfx {
+                effect_id: VFX_DECOY,
+                pos: [p.x, p.y, p.z],
+            });
         }
 
         // --- PEM: paralisa naves inimigas no raio ---
@@ -1083,6 +1126,10 @@ impl World {
 
         // Colisões: dano + destruição de naves.
         self.check_projectile_collisions();
+        // Torpedos DEPOIS da colisão normal: um projétil que já acertou
+        // uma nave não deve também abater um torpedo no mesmo tick.
+        self.step_torpedoes(dt);
+        self.projectiles_vs_torpedoes();
         // Impacto contra planeta/estrela — depois dos projéteis, para
         // que a explosão de queda tenha prioridade na leitura.
         self.check_celestial_collisions();
@@ -1435,6 +1482,16 @@ fn rot_to_bits(r: Rotation) -> [u32; 4] { [r.x.to_bits(), r.y.to_bits(), r.z.to_
 /// Arrasto linear da nave de jogador.
 ///
 /// Nomeado porque o cliente precisa do MESMO valor para prever a
+/// Espera entre lançamentos de torpedo, em segundos.
+///
+/// Alta de propósito: um lançador de repetição transformaria o combate
+/// em administrar torpedos em vez de pilotar.
+const TORPEDO_COOLDOWN: f32 = 9.0;
+/// Quanto tempo as iscas de dispersão continuam confundindo, em segundos.
+const DECOY_TTL: f32 = 4.0;
+/// Distância em que uma isca ainda cobre a nave.
+const DECOY_RADIUS: f32 = 90.0;
+
 /// trajetória sob gravidade — ele chega no `Sector`.
 pub const PLAYER_SHIP_DRAG: f32 = 0.5;
 
@@ -1574,6 +1631,31 @@ pub fn build_dynamic_snapshot(
         });
     }
 
+
+    let mut torp_ids: Vec<_> = world.torpedoes.keys().copied().collect();
+    torp_ids.sort();
+    for id in torp_ids {
+        let (p, t) = &world.torpedoes[&id];
+        entities.push(EntityState {
+            id,
+            kind: EntityKind::Torpedo,
+            pos: [p.x, p.y, p.z],
+            rot: [0.0, 0.0, 0.0, 1.0],
+            vel: [
+                t.dir[0] * t.speed,
+                t.dir[1] * t.speed,
+                t.dir[2] * t.speed,
+            ],
+            hp_ratio: None,
+            display_name: None,
+            payload: Some(EntityPayload::Torpedo(TorpedoPayload {
+                dir: t.dir,
+                radius: t.profile.radius,
+                hp_ratio: (t.hp / t.profile.hp).clamp(0.0, 1.0),
+                locked: t.target.is_some(),
+            })),
+        });
+    }
     let mut npc_ids: Vec<_> = world.npcs.keys().copied().collect();
     npc_ids.sort();
     for id in npc_ids {
@@ -1772,6 +1854,31 @@ pub fn build_snapshot(world: &World) -> crate::net::protocol::SnapshotData {
         });
     }
 
+
+    let mut torp_ids: Vec<_> = world.torpedoes.keys().copied().collect();
+    torp_ids.sort();
+    for id in torp_ids {
+        let (p, t) = &world.torpedoes[&id];
+        entities.push(EntityState {
+            id,
+            kind: EntityKind::Torpedo,
+            pos: [p.x, p.y, p.z],
+            rot: [0.0, 0.0, 0.0, 1.0],
+            vel: [
+                t.dir[0] * t.speed,
+                t.dir[1] * t.speed,
+                t.dir[2] * t.speed,
+            ],
+            hp_ratio: None,
+            display_name: None,
+            payload: Some(EntityPayload::Torpedo(TorpedoPayload {
+                dir: t.dir,
+                radius: t.profile.radius,
+                hp_ratio: (t.hp / t.profile.hp).clamp(0.0, 1.0),
+                locked: t.target.is_some(),
+            })),
+        });
+    }
     // NPCs.
     let mut npc_ids: Vec<_> = world.npcs.keys().copied().collect();
     npc_ids.sort();
@@ -2900,5 +3007,673 @@ mod habilidades_e_consumiveis {
             _ => None,
         });
         assert_eq!(evento, Some(2));
+    }
+}
+
+impl World {
+    /// Lança um torpedo da nave de `player_id` contra `target`.
+    ///
+    /// Silenciosamente ignorado quando a nave não tem lançador equipado,
+    /// quando o alvo não existe, ou quando ele está fora do alcance de
+    /// travamento — o cliente pede, o servidor decide.
+    pub fn launch_torpedo(&mut self, player_id: u32, target: EntityId) {
+        let Some(&id) = self.player_ships.get(&player_id) else { return };
+        let Some((pos, _, rot, ship)) = self.ships.get(&id).cloned() else { return };
+        let Some(perfil) = ship.torpedo else { return };
+        if ship.torpedo_cooldown > 0.0 || ship.emp_remaining > 0.0 {
+            return;
+        }
+        // O alvo tem que existir e não ser a própria nave.
+        if target == id {
+            return;
+        }
+        let Some((tpos, _, _, _)) = self.ships.get(&target) else { return };
+        let d2 = dist_sq(pos, *tpos);
+        if d2 > perfil.lock_range * perfil.lock_range {
+            return;
+        }
+
+        let fwd = forward(&rot);
+        let torp = sim_core::ship::torpedo::Torpedo::new(perfil, ship.owner_player_id, fwd, target);
+        // Nasce à frente da nave, como o projétil.
+        let saida = Position {
+            x: pos.x + fwd[0] * 4.0,
+            y: pos.y + fwd[1] * 4.0,
+            z: pos.z + fwd[2] * 4.0,
+        };
+        let tid = self.alloc_id();
+        self.torpedoes.insert(tid, (saida, torp));
+
+        if let Some((_, _, _, s)) = self.ships.get_mut(&id) {
+            s.torpedo_cooldown = TORPEDO_COOLDOWN;
+        }
+        self.events.push(crate::net::protocol::ServerMsg::Vfx {
+            effect_id: VFX_MUZZLE,
+            pos: [saida.x, saida.y, saida.z],
+        });
+    }
+
+    /// Solta iscas de dispersão a partir da nave do jogador.
+    ///
+    /// É a terceira defesa: não custa a dobra nem exige acertar um alvo
+    /// pequeno, mas gasta uma carga.
+    pub fn deploy_decoys(&mut self, player_id: u32) {
+        use sim_core::ship::consumables::{decoy_slot, UseOutcome};
+        let Some(&id) = self.player_ships.get(&player_id) else { return };
+        let Some((pos, _, _, ship)) = self.ships.get(&id) else { return };
+        let p = *pos;
+        let dono = ship.owner_player_id;
+
+        // As iscas CUSTAM uma carga. Sem isto seriam infinitas, e a
+        // defesa mais fácil contra torpedo passaria a ser gratuita —
+        // as outras três (manobrar, dobra, abater) deixariam de ter
+        // qualquer motivo para existir.
+        let Some(slot) = self
+            .ships
+            .get(&id)
+            .and_then(|(_, _, _, s)| decoy_slot(&s.belt))
+        else {
+            return;
+        };
+        let usado = self
+            .ships
+            .get_mut(&id)
+            .map(|(_, _, _, s)| s.belt.use_slot(slot))
+            .unwrap_or(UseOutcome::Rejected);
+        let UseOutcome::Used { vfx, .. } = usado else { return };
+
+        let restantes = self.ships[&id].3.belt.charges_at(slot);
+        self.events.push(crate::net::protocol::ServerMsg::ConsumableUsed {
+            entity_id: id,
+            slot: slot as u8,
+            vfx,
+            charges_left: restantes,
+        });
+
+        self.decoys.push((p, DECOY_TTL, dono));
+        self.events.push(crate::net::protocol::ServerMsg::Vfx {
+            effect_id: VFX_DECOY,
+            pos: [p.x, p.y, p.z],
+        });
+    }
+
+    /// Avança os torpedos: perseguição, trava, colisão e expiração.
+    fn step_torpedoes(&mut self, dt: f32) {
+        use sim_core::ship::torpedo::{check_lock, LockLost};
+
+        // Envelhece as iscas antes de consultá-las: uma isca com TTL
+        // zerado não deve mais confundir ninguém.
+        for d in &mut self.decoys {
+            d.1 -= dt;
+        }
+        self.decoys.retain(|d| d.1 > 0.0);
+
+        let ids: Vec<EntityId> = self.torpedoes.keys().copied().collect();
+        let mut removidos: Vec<EntityId> = Vec::new();
+        let mut impactos: Vec<(EntityId, f32, f32, u32, Position)> = Vec::new();
+
+        for tid in ids {
+            let Some((pos, torp)) = self.torpedoes.get(&tid).cloned() else { continue };
+            let mut torp = torp;
+            let mut pos = pos;
+
+            // --- Trava ---
+            let alvo_pos = torp.target.and_then(|t| {
+                self.ships
+                    .get(&t)
+                    .map(|(p, v, _, _)| (*p, (v.x * v.x + v.y * v.y + v.z * v.z).sqrt()))
+            });
+
+            match alvo_pos {
+                Some((tp, vel_alvo)) => {
+                    let dist = dist_sq(pos, tp).sqrt();
+                    // Isca perto do ALVO, não do torpedo: é o alvo que
+                    // se esconde atrás delas.
+                    let iscas = self
+                        .decoys
+                        .iter()
+                        .any(|(dp, _, _)| dist_sq(*dp, tp) <= DECOY_RADIUS * DECOY_RADIUS);
+                    if let Err(motivo) = check_lock(vel_alvo, dist, torp.profile.lock_range, iscas) {
+                        torp.lose_lock();
+                        self.events.push(crate::net::protocol::ServerMsg::TorpedoLockLost {
+                            torpedo_id: tid,
+                            reason: match motivo {
+                                LockLost::TooFast => 0,
+                                LockLost::Decoyed => 1,
+                                LockLost::OutOfRange => 2,
+                            },
+                        });
+                    }
+                }
+                // Alvo destruído no meio do voo.
+                None => torp.lose_lock(),
+            }
+
+            let alvo_ponto = torp
+                .target
+                .and_then(|t| self.ships.get(&t))
+                .map(|(p, _, _, _)| [p.x, p.y, p.z]);
+
+            torp.step(dt, [pos.x, pos.y, pos.z], alvo_ponto);
+            pos = Position {
+                x: pos.x + torp.dir[0] * torp.speed * dt,
+                y: pos.y + torp.dir[1] * torp.speed * dt,
+                z: pos.z + torp.dir[2] * torp.speed * dt,
+            };
+
+            if torp.expired() {
+                removidos.push(tid);
+                self.events.push(crate::net::protocol::ServerMsg::Vfx {
+                    effect_id: VFX_IMPACT,
+                    pos: [pos.x, pos.y, pos.z],
+                });
+                continue;
+            }
+
+            // --- Colisão com naves ---
+            let mut acertou = None;
+            for (sid, (sp, _, _, s)) in &self.ships {
+                if s.owner_player_id == torp.owner_player_id {
+                    continue;
+                }
+                // Naves em dobra são imunes, igual aos projéteis: o
+                // salto tem que ser fuga, não armadilha.
+                if s.warp_remaining > 0.0 {
+                    continue;
+                }
+                let raio = torp.profile.radius + s.radius;
+                if dist_sq(pos, *sp) <= raio * raio {
+                    acertou = Some(*sid);
+                    break;
+                }
+            }
+            if let Some(sid) = acertou {
+                impactos.push((
+                    sid,
+                    torp.profile.damage,
+                    torp.profile.splash_radius,
+                    torp.owner_player_id,
+                    pos,
+                ));
+                removidos.push(tid);
+                continue;
+            }
+
+            self.torpedoes.insert(tid, (pos, torp));
+        }
+
+        for tid in removidos {
+            self.torpedoes.remove(&tid);
+            self.destroyed.push((tid, None));
+        }
+
+        for (sid, dano, splash, atacante, ponto) in impactos {
+            self.apply_torpedo_hit(sid, dano, splash, atacante, ponto);
+        }
+    }
+
+    fn apply_torpedo_hit(
+        &mut self,
+        alvo: EntityId,
+        dano: f32,
+        splash: f32,
+        atacante: u32,
+        ponto: Position,
+    ) {
+        let mut alvos: Vec<(EntityId, f32)> = vec![(alvo, dano)];
+        if splash > 0.0 {
+            let r2 = splash * splash;
+            for (sid, (sp, _, _, s)) in &self.ships {
+                if *sid == alvo || s.owner_player_id == atacante {
+                    continue;
+                }
+                let d2 = dist_sq(*sp, ponto);
+                if d2 <= r2 {
+                    let f = 1.0 - d2.sqrt() / splash;
+                    alvos.push((*sid, dano * f * 0.6));
+                }
+            }
+        }
+        for (sid, d) in alvos {
+            if let Some((p, v, r, ship)) = self.ships.get(&sid).cloned() {
+                let mut novo = ship;
+                let absorvido = d.min(novo.shield_hp);
+                novo.shield_hp -= absorvido;
+                novo.hull_hp = (novo.hull_hp - (d - absorvido)).max(0.0);
+                if novo.hull_hp <= 0.0 {
+                    self.destroyed
+                        .push((sid, if atacante != 0 { Some(atacante) } else { None }));
+                }
+                self.ships.insert(sid, (p, v, r, novo));
+            }
+        }
+        self.events.push(crate::net::protocol::ServerMsg::Vfx {
+            effect_id: VFX_EXPLOSION_LARGE,
+            pos: [ponto.x, ponto.y, ponto.z],
+        });
+    }
+
+    /// Projéteis podem ABATER torpedos — a quarta defesa.
+    ///
+    /// Roda depois da colisão normal de projéteis: um tiro gasto num
+    /// torpedo é um tiro que não foi para quem o lançou, e esse é
+    /// justamente o custo desta saída.
+    fn projectiles_vs_torpedoes(&mut self) {
+        let proj_ids: Vec<EntityId> = self.projectiles.keys().copied().collect();
+        let mut proj_gastos: Vec<EntityId> = Vec::new();
+        let mut torp_abatidos: Vec<(EntityId, Position)> = Vec::new();
+
+        for pid in proj_ids {
+            let Some((ppos, _, proj)) = self.projectiles.get(&pid).cloned() else { continue };
+            for (tid, (tpos, torp)) in self.torpedoes.iter_mut() {
+                // Não abate o próprio torpedo.
+                if torp.owner_player_id == proj.owner_player_id {
+                    continue;
+                }
+                let raio = proj.radius + torp.profile.radius;
+                if dist_sq(ppos, *tpos) > raio * raio {
+                    continue;
+                }
+                if torp.take_damage(proj.damage) {
+                    torp_abatidos.push((*tid, *tpos));
+                }
+                proj_gastos.push(pid);
+                break;
+            }
+        }
+
+        for pid in proj_gastos {
+            self.projectiles.remove(&pid);
+            self.destroyed.push((pid, None));
+        }
+        for (tid, pos) in torp_abatidos {
+            self.torpedoes.remove(&tid);
+            self.destroyed.push((tid, None));
+            self.events.push(crate::net::protocol::ServerMsg::Vfx {
+                effect_id: VFX_EXPLOSION_LARGE,
+                pos: [pos.x, pos.y, pos.z],
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod torpedos_e_defesas {
+    //! As quatro defesas contra torpedo, no mundo de verdade.
+    //!
+    //! Um torpedo indefensável vira imposto e um que se perde sozinho
+    //! vira enfeite. O equilíbrio inteiro está em cada uma destas saídas
+    //! funcionar — e é fácil quebrar uma delas sem notar, porque as três
+    //! outras continuam passando.
+
+    use super::*;
+
+    fn arena(jogadores: &[u32]) -> World {
+        let mut w = World::new();
+        for p in jogadores {
+            w.spawn_player_ship(*p, format!("p{p}"));
+            w.apply_loadout(
+                *p,
+                &[
+                    "railgun_s".to_string(),
+                    "engine_mk3".to_string(),
+                    "torpedo_seeker".to_string(),
+                ],
+            );
+        }
+        w
+    }
+
+    /// Coloca o alvo a `dist` unidades do atirador, no eixo Z.
+    fn posicionar(w: &mut World, atirador: u32, alvo: u32, dist: f32) -> (EntityId, EntityId) {
+        let a = w.player_ships[&atirador];
+        let b = w.player_ships[&alvo];
+        let pa = w.ships[&a].0;
+        w.ships.get_mut(&b).unwrap().0 = Position {
+            x: pa.x,
+            y: pa.y,
+            z: pa.z + dist,
+        };
+        (a, b)
+    }
+
+    #[test]
+    fn lancador_equipado_pelo_loadout() {
+        let w = arena(&[1]);
+        let id = w.player_ships[&1];
+        assert!(w.ships[&id].3.torpedo.is_some());
+    }
+
+    #[test]
+    fn sem_lancador_nao_lanca() {
+        let mut w = World::new();
+        w.spawn_player_ship(1, "a".into());
+        w.spawn_player_ship(2, "b".into());
+        w.apply_loadout(1, &["railgun_s".to_string()]);
+        posicionar(&mut w, 1, 2, 200.0);
+        let alvo = w.player_ships[&2];
+        w.launch_torpedo(1, alvo);
+        assert!(w.torpedoes.is_empty());
+    }
+
+    #[test]
+    fn lanca_e_o_torpedo_aparece() {
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 200.0);
+        w.launch_torpedo(1, alvo);
+        assert_eq!(w.torpedoes.len(), 1);
+    }
+
+    #[test]
+    fn nao_lanca_contra_si_mesmo() {
+        let mut w = arena(&[1]);
+        let eu = w.player_ships[&1];
+        w.launch_torpedo(1, eu);
+        assert!(w.torpedoes.is_empty());
+    }
+
+    #[test]
+    fn nao_lanca_fora_do_alcance_de_trava() {
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 5000.0);
+        w.launch_torpedo(1, alvo);
+        assert!(w.torpedoes.is_empty());
+    }
+
+    #[test]
+    fn cooldown_impede_disparo_em_rajada() {
+        // Um lançador de repetição transformaria o combate em administrar
+        // torpedos em vez de pilotar.
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 200.0);
+        w.launch_torpedo(1, alvo);
+        w.launch_torpedo(1, alvo);
+        assert_eq!(w.torpedoes.len(), 1);
+    }
+
+    #[test]
+    fn nave_sob_pem_nao_lanca() {
+        let mut w = arena(&[1, 2]);
+        let (eu, alvo) = posicionar(&mut w, 1, 2, 200.0);
+        w.ships.get_mut(&eu).unwrap().3.emp_remaining = 3.0;
+        w.launch_torpedo(1, alvo);
+        assert!(w.torpedoes.is_empty());
+    }
+
+    // ------------------------------------------------ Defesa: impulso
+    #[test]
+    fn dobra_quebra_a_trava_do_torpedo() {
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 200.0);
+        w.launch_torpedo(1, alvo);
+
+        // Alvo em velocidade de dobra.
+        w.ships.get_mut(&alvo).unwrap().1 = Velocity {
+            x: 0.0,
+            y: 0.0,
+            z: 600.0,
+        };
+        w.step(1.0 / 30.0);
+
+        let travado = w.torpedoes.values().next().map(|(_, t)| t.target.is_some());
+        assert_eq!(travado, Some(false), "a dobra deveria ter quebrado a trava");
+    }
+
+    #[test]
+    fn voo_rapido_normal_nao_quebra_a_trava() {
+        // Escapar tem que exigir a habilidade, não acontecer numa reta.
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 200.0);
+        w.launch_torpedo(1, alvo);
+        w.ships.get_mut(&alvo).unwrap().1 = Velocity {
+            x: 0.0,
+            y: 0.0,
+            z: 150.0,
+        };
+        w.step(1.0 / 30.0);
+        let travado = w.torpedoes.values().next().map(|(_, t)| t.target.is_some());
+        assert_eq!(travado, Some(true));
+    }
+
+    // ----------------------------------------------- Defesa: dispersão
+    #[test]
+    fn iscas_quebram_a_trava() {
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 200.0);
+        w.launch_torpedo(1, alvo);
+        // As iscas custam uma carga: sem elas equipadas, não há defesa.
+        w.apply_consumables(
+            2,
+            &[sim_core::ship::consumables::ConsumableSlot {
+                template_id: "decoy_flare".into(),
+                charges: 2,
+            }],
+        );
+        w.deploy_decoys(2);
+        w.step(1.0 / 30.0);
+        let travado = w.torpedoes.values().next().map(|(_, t)| t.target.is_some());
+        assert_eq!(travado, Some(false), "as iscas deveriam ter enganado o rastreador");
+    }
+
+    #[test]
+    fn sem_carga_de_iscas_nada_e_solto() {
+        // As iscas seriam a defesa gratuita se não custassem nada, e as
+        // outras três perderiam o motivo de existir.
+        let mut w = arena(&[1, 2]);
+        posicionar(&mut w, 1, 2, 200.0);
+        w.deploy_decoys(2);
+        assert!(w.decoys.is_empty());
+    }
+
+    #[test]
+    fn iscas_expiram_e_param_de_proteger() {
+        let mut w = arena(&[1, 2]);
+        posicionar(&mut w, 1, 2, 200.0);
+        w.apply_consumables(
+            2,
+            &[sim_core::ship::consumables::ConsumableSlot {
+                template_id: "decoy_flare".into(),
+                charges: 2,
+            }],
+        );
+        w.deploy_decoys(2);
+        assert_eq!(w.decoys.len(), 1);
+        for _ in 0..(30 * 5) {
+            w.step(1.0 / 30.0);
+        }
+        assert!(w.decoys.is_empty(), "as iscas têm que expirar");
+    }
+
+    // --------------------------------------------------- Defesa: tiro
+    #[test]
+    fn projetil_inimigo_abate_o_torpedo() {
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 300.0);
+        w.launch_torpedo(1, alvo);
+        let (tpos, _) = w.torpedoes.values().next().cloned().unwrap();
+
+        // Um projétil do ALVO, em cima do torpedo, com dano suficiente.
+        let pid = w.alloc_id();
+        let proj = Projectile {
+            owner_player_id: 2,
+            owner_entity: alvo,
+            damage: 500.0,
+            ttl_remaining: 3.0,
+            radius: 2.0,
+            speed: 100.0,
+            splash_radius: 0.0,
+            visual: 0,
+            charge: 0.0,
+        };
+        w.projectiles.insert(
+            pid,
+            (
+                tpos,
+                Velocity {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                proj,
+            ),
+        );
+
+        w.projectiles_vs_torpedoes();
+        assert!(w.torpedoes.is_empty(), "o torpedo deveria ter sido abatido");
+    }
+
+    #[test]
+    fn o_proprio_projetil_nao_abate_o_proprio_torpedo() {
+        // Senão a salva de tiros do atirador destruiria o próprio
+        // torpedo ao segui-lo.
+        let mut w = arena(&[1, 2]);
+        let (eu, alvo) = posicionar(&mut w, 1, 2, 300.0);
+        w.launch_torpedo(1, alvo);
+        let (tpos, _) = w.torpedoes.values().next().cloned().unwrap();
+
+        let pid = w.alloc_id();
+        let proj = Projectile {
+            owner_player_id: 1,
+            owner_entity: eu,
+            damage: 500.0,
+            ttl_remaining: 3.0,
+            radius: 2.0,
+            speed: 100.0,
+            splash_radius: 0.0,
+            visual: 0,
+            charge: 0.0,
+        };
+        w.projectiles.insert(
+            pid,
+            (
+                tpos,
+                Velocity {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                proj,
+            ),
+        );
+
+        w.projectiles_vs_torpedoes();
+        assert_eq!(w.torpedoes.len(), 1);
+    }
+
+    #[test]
+    fn um_tiro_fraco_nao_derruba_o_torpedo_de_uma_vez() {
+        // O torpedo tem casco: abater custa dano, não um toque.
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 300.0);
+        w.launch_torpedo(1, alvo);
+        let (tpos, _) = w.torpedoes.values().next().cloned().unwrap();
+
+        let pid = w.alloc_id();
+        let proj = Projectile {
+            owner_player_id: 2,
+            owner_entity: alvo,
+            damage: 5.0,
+            ttl_remaining: 3.0,
+            radius: 2.0,
+            speed: 100.0,
+            splash_radius: 0.0,
+            visual: 0,
+            charge: 0.0,
+        };
+        w.projectiles.insert(
+            pid,
+            (
+                tpos,
+                Velocity {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                proj,
+            ),
+        );
+
+        w.projectiles_vs_torpedoes();
+        assert_eq!(w.torpedoes.len(), 1, "5 de dano não derruba 40 de casco");
+        // Mas o projétil foi gasto: é o custo desta defesa.
+        assert!(w.projectiles.is_empty());
+    }
+
+    // ---------------------------------------------------- Defesa: fuga
+    #[test]
+    fn o_torpedo_expira_sem_combustivel() {
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 200.0);
+        w.launch_torpedo(1, alvo);
+        // Alvo fora de alcance: nada a perseguir de perto.
+        w.ships.get_mut(&alvo).unwrap().0 = Position {
+            x: 0.0,
+            y: 0.0,
+            z: 40_000.0,
+        };
+        for _ in 0..(30 * 9) {
+            w.step(1.0 / 30.0);
+        }
+        assert!(w.torpedoes.is_empty(), "deveria ter ficado sem combustível");
+    }
+
+    #[test]
+    fn torpedo_atinge_alvo_parado_e_causa_dano() {
+        // O contrapeso: se ninguém nunca fosse atingido, o torpedo
+        // seria decorativo e as defesas não teriam sentido.
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 150.0);
+        let hp_antes = w.ships[&alvo].3.hull_hp + w.ships[&alvo].3.shield_hp;
+        w.launch_torpedo(1, alvo);
+        for _ in 0..(30 * 7) {
+            w.step(1.0 / 30.0);
+            if w.torpedoes.is_empty() {
+                break;
+            }
+        }
+        let hp_depois = w.ships[&alvo].3.hull_hp + w.ships[&alvo].3.shield_hp;
+        assert!(
+            hp_depois < hp_antes,
+            "alvo parado deveria levar dano: {hp_antes} -> {hp_depois}"
+        );
+    }
+
+    #[test]
+    fn nave_em_dobra_e_imune_ao_impacto() {
+        // Mesma regra dos projéteis: o salto tem que ser fuga, não
+        // armadilha.
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 60.0);
+        w.launch_torpedo(1, alvo);
+        w.ships.get_mut(&alvo).unwrap().3.warp_remaining = 5.0;
+        let hp_antes = w.ships[&alvo].3.hull_hp;
+        for _ in 0..30 {
+            w.step(1.0 / 30.0);
+        }
+        assert_eq!(w.ships[&alvo].3.hull_hp, hp_antes);
+    }
+
+    #[test]
+    fn torpedo_aparece_no_snapshot_com_payload() {
+        // O alvo precisa ver o torpedo para reagir a ele.
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 200.0);
+        w.launch_torpedo(1, alvo);
+        w.step(1.0 / 30.0);
+
+        let snap = build_snapshot(&w);
+        let t = snap
+            .entities
+            .iter()
+            .find(|e| e.kind == crate::net::protocol::EntityKind::Torpedo);
+        assert!(t.is_some(), "o torpedo tem que aparecer no snapshot");
+        let payload = t.unwrap().payload.as_ref().unwrap();
+        match payload {
+            crate::net::protocol::EntityPayload::Torpedo(tp) => {
+                assert!(tp.locked, "ainda perseguindo");
+                assert!(tp.hp_ratio > 0.0);
+            }
+            outro => panic!("payload errado: {outro:?}"),
+        }
     }
 }

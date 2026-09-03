@@ -45,6 +45,8 @@ describe('InputController', () => {
       defend: false,
       skill: null,
       useConsumable: null,
+      launchTorpedo: false,
+      deployDecoys: false,
     });
   });
 
@@ -149,6 +151,22 @@ describe('InputController', () => {
     down('Digit4');
     expect(ctrl.read().useConsumable).toBe(0);
     expect(ctrl.read().useConsumable).toBeNull();
+  });
+
+  it('R pede torpedo e F pede iscas', () => {
+    // As duas defesas de reação: obrigar a mão a sair da fileira de voo
+    // para soltar iscas anularia a defesa.
+    down('KeyR');
+    expect(ctrl.read().launchTorpedo).toBe(true);
+    up('KeyR');
+    down('KeyF');
+    expect(ctrl.read().deployDecoys).toBe(true);
+  });
+
+  it('torpedo e iscas são consumidos uma vez só', () => {
+    down('KeyR');
+    expect(ctrl.read().launchTorpedo).toBe(true);
+    expect(ctrl.read().launchTorpedo).toBe(false);
   });
 
   it('perder o foco cancela um consumível pedido', () => {

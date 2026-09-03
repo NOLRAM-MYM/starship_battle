@@ -74,6 +74,10 @@ pub enum PlayerCommand {
         skill: Option<sim_core::skills::ActiveSkill>,
         /// Slot de consumível pedido neste pacote.
         use_consumable: Option<u8>,
+        /// Alvo do torpedo pedido neste pacote.
+        launch_torpedo: Option<u32>,
+        /// Pedido de iscas de dispersão.
+        deploy_decoys: bool,
     },
     Leave {
         player_id: u32,
@@ -331,6 +335,8 @@ pub async fn run_simulation_loop(state: ServerState) {
                         fire_charge,
                         skill,
                         use_consumable,
+                        launch_torpedo,
+                        deploy_decoys,
                     } => {
                         world.set_input(
                             player_id,
@@ -343,6 +349,12 @@ pub async fn run_simulation_loop(state: ServerState) {
                             skill,
                             use_consumable,
                         );
+                        if let Some(alvo) = launch_torpedo {
+                            world.launch_torpedo(player_id, alvo);
+                        }
+                        if deploy_decoys {
+                            world.deploy_decoys(player_id);
+                        }
                     }
                     PlayerCommand::Leave { player_id } => {
                         world.despawn_player(player_id);
