@@ -8,9 +8,14 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createInputController, type InputController } from './keyboard';
+import {
+  createInputController,
+  jogoFicaComATecla,
+  type InputController,
+} from './keyboard';
 import {
   ACTIONS,
+  browserDisputaTecla,
   buildReverseMap,
   conflictsFor,
   DEFAULT_KEYMAP,
@@ -24,6 +29,22 @@ function down(code: string): void {
 }
 function up(code: string): void {
   window.dispatchEvent(new KeyboardEvent('keyup', { code }));
+}
+
+/**
+ * Dispara um evento CANCELÁVEL e devolve se o jogo tomou a tecla.
+ *
+ * `cancelable` importa: sem ele `preventDefault()` não marca nada e o
+ * teste passaria sem testar coisa alguma.
+ */
+function disparar(
+  tipo: 'keydown' | 'keyup',
+  code: string,
+  init: KeyboardEventInit = {},
+): boolean {
+  const ev = new KeyboardEvent(tipo, { code, cancelable: true, ...init });
+  window.dispatchEvent(ev);
+  return ev.defaultPrevented;
 }
 
 describe('InputController', () => {
@@ -158,10 +179,10 @@ describe('InputController', () => {
     // Ao contrário das outras ações de combate, ela vale enquanto a
     // tecla estiver segurada — é o equivalente aos propulsores vernier.
     expect(ctrl.read().fineControl).toBe(false);
-    down('AltLeft');
+    down(DEFAULT_KEYMAP.fineControl);
     expect(ctrl.read().fineControl).toBe(true);
     expect(ctrl.read().fineControl, 'continua valendo sem soltar').toBe(true);
-    up('AltLeft');
+    up(DEFAULT_KEYMAP.fineControl);
     expect(ctrl.read().fineControl).toBe(false);
   });
 
@@ -289,5 +310,62 @@ describe('keybindings', () => {
     expect(isBindableCode('F12')).toBe(false);
     expect(isBindableCode('MetaLeft')).toBe(false);
     expect(isBindableCode('')).toBe(false);
+  });
+});
+
+describe('a página não pode roubar a tecla do jogo', () => {
+  // O caso que motivou tudo: com Alt na mira fina, apertar Alt movia o
+  // foco para a barra de menus do navegador e a nave parava de responder
+  // no meio do combate — sem erro nenhum, só um jogo surdo.
+  let ctrl: InputController;
+
+  beforeEach(() => {
+    ctrl = createInputController({ ...DEFAULT_KEYMAP, fineControl: 'AltLeft' });
+    ctrl.attach();
+  });
+
+  it('barra o comportamento padrão de uma tecla vinculada', () => {
+    expect(disparar('keydown', 'AltLeft')).toBe(true);
+  });
+
+  it('barra também ao soltar', () => {
+    // O Firefox abre a barra de menus no keyup do Alt: barrar só o
+    // keydown resolveria metade do problema.
+    expect(disparar('keyup', 'AltLeft')).toBe(true);
+  });
+
+  it('não mexe em teclas que o jogo não usa', () => {
+    // Se o jogo barrasse tudo, digitar num campo ou usar um atalho fora
+    // do canvas quebraria junto.
+    expect(disparar('keydown', 'KeyP')).toBe(false);
+  });
+
+  it('deixa passar os atalhos com Ctrl e Cmd', () => {
+    // `KeyD` é uma guinada, mas Ctrl+D é o favorito do navegador: quem
+    // aperta Ctrl quer o navegador, não a nave.
+    expect(disparar('keydown', 'KeyD', { ctrlKey: true })).toBe(false);
+    expect(disparar('keydown', 'KeyD', { metaKey: true })).toBe(false);
+  });
+
+  it('não sequestra as saídas do navegador', () => {
+    // Recarregar e tela cheia são escapes do usuário. Um jogo que os
+    // toma prende quem só quer sair.
+    for (const code of ['F5', 'F11', 'F12']) {
+      expect(jogoFicaComATecla({ code, ctrlKey: false, metaKey: false })).toBe(false);
+    }
+  });
+});
+
+describe('padrão de mira fina', () => {
+  it('não usa uma tecla que o navegador disputa', () => {
+    // Alt funcionava na mão e não no navegador. Este teste existe para
+    // que a próxima escolha "ergonômica" não repita o erro.
+    expect(browserDisputaTecla(DEFAULT_KEYMAP.fineControl)).toBe(false);
+  });
+
+  it('não colide com nenhum outro comando', () => {
+    expect(conflictsFor(DEFAULT_KEYMAP, DEFAULT_KEYMAP.fineControl, 'fineControl')).toEqual(
+      [],
+    );
   });
 });

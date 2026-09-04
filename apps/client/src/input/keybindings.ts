@@ -106,9 +106,15 @@ export const DEFAULT_KEYMAP: Keymap = {
   // soltar iscas anularia a defesa.
   launchTorpedo: 'KeyR',
   deployDecoys: 'KeyF',
-  // Alt esquerdo: fica sob o polegar, dá para segurar enquanto WASD
-  // continua sendo usado. Mira fina é um MODO mantido, não um toque.
-  fineControl: 'AltLeft',
+  // Espaço, e não Alt.
+  //
+  // Mira fina é um MODO mantido, então precisa de uma tecla que o polegar
+  // segure enquanto WASD continua em uso — Alt esquerdo cabia bem na mão
+  // e não cabia no navegador: apertar Alt sozinho move o foco para a
+  // barra de menus, e a página para de receber teclado no meio do
+  // combate. Espaço fica sob o mesmo polegar, não colide com WASD nem com
+  // ZXC, e nenhum navegador o disputa quando a página o consome.
+  fineControl: 'Space',
   cycleTarget: 'Tab',
   toggleGravityLines: 'KeyG',
   toHangar: 'Escape',
@@ -264,4 +270,25 @@ export function isBindableCode(code: string): boolean {
     'PrintScreen', 'NumLock', 'ScrollLock', 'Pause',
   ]);
   return !blocked.has(code);
+}
+
+/**
+ * Teclas que o navegador tende a tomar de volta mesmo depois de ligadas
+ * a uma ação — vinculáveis, porém desaconselhadas.
+ *
+ * Isto NÃO é a lista de `isBindableCode`: ali estão as teclas que não
+ * funcionam de jeito nenhum. Aqui estão as que funcionam *quase* sempre,
+ * e é justamente esse "quase" que dói. Alt sozinho manda o foco para a
+ * barra de menus; Ctrl não faz nada sozinho, mas segurá-lo transforma
+ * cada tecla de voo num atalho do navegador (Ctrl+S salva a página,
+ * Ctrl+D marca o favorito). Quem escolhe uma delas merece o aviso antes
+ * de descobrir em pleno combate.
+ */
+export function browserDisputaTecla(code: string): boolean {
+  return (
+    code === 'AltLeft' ||
+    code === 'AltRight' ||
+    code === 'ControlLeft' ||
+    code === 'ControlRight'
+  );
 }

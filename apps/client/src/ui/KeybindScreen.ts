@@ -1,5 +1,6 @@
 import {
   ACTIONS,
+  browserDisputaTecla,
   conflictsFor,
   isBindableCode,
   keyLabel,
@@ -135,12 +136,22 @@ export class KeybindScreen {
     saveKeymap(this.map);
     this.opts.onChange?.(this.getKeymap());
 
-    this.notice = colisoes.length
-      ? {
-          text: `Tecla tomada de "${labelOf(colisoes[0]!)}" — reatribua essa ação.`,
-          tone: 'bad',
-        }
-      : { text: 'Controle atualizado.', tone: 'good' };
+    // O aviso do navegador vem primeiro: um conflito interno o jogador
+    // resolve aqui mesmo, mas uma tecla disputada pelo navegador falha
+    // só em pleno voo, quando não há como saber por quê.
+    if (browserDisputaTecla(e.code)) {
+      this.notice = {
+        text: `${keyLabel(e.code)} costuma ser tomada pelo navegador — se o comando falhar no meio do jogo, é isso.`,
+        tone: 'bad',
+      };
+    } else {
+      this.notice = colisoes.length
+        ? {
+            text: `Tecla tomada de "${labelOf(colisoes[0]!)}" — reatribua essa ação.`,
+            tone: 'bad',
+          }
+        : { text: 'Controle atualizado.', tone: 'good' };
+    }
 
     this.capturing = null;
     this.stopCapture();

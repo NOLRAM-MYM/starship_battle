@@ -99,6 +99,36 @@ const SKILL_OF: Partial<Record<GameAction, 'Dash' | 'Emp' | 'Repair'>> = {
   skill3: 'Repair',
 };
 
+/**
+ * Teclas que o navegador nunca cede, aconteça o que acontecer.
+ *
+ * Recarregar, alternar tela cheia e abrir as ferramentas de
+ * desenvolvimento são escapes do usuário, não do jogo: tomá-las seria
+ * prender quem só quer sair.
+ */
+const RESERVADAS_DO_NAVEGADOR = new Set(['F5', 'F11', 'F12']);
+
+/**
+ * A tecla é do jogo, ou o navegador fica com ela?
+ *
+ * Antes disto a lista era `Tab` e `Space`, escolhidos um a um conforme
+ * incomodavam — e sobrou de fora justamente o Alt da mira fina, que no
+ * navegador move o foco para a barra de menus: a página parava de
+ * receber teclado no meio do combate e a nave ficava surda.
+ *
+ * A regra certa não é uma lista de teclas ruins: se a tecla está ligada
+ * a uma ação, o jogador já disse que ela é do jogo. Fora as duas
+ * exceções — atalhos com Ctrl/Cmd e as teclas de escape do navegador —,
+ * que continuam valendo porque quem aperta Ctrl+W quer mesmo fechar a
+ * aba.
+ */
+export function jogoFicaComATecla(
+  e: Pick<KeyboardEvent, 'code' | 'ctrlKey' | 'metaKey'>,
+): boolean {
+  if (e.ctrlKey || e.metaKey) return false;
+  return !RESERVADAS_DO_NAVEGADOR.has(e.code);
+}
+
 export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputController {
   let reverse = buildReverseMap(initial);
   /** Ações fisicamente pressionadas agora. */
@@ -130,8 +160,7 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
     const action = reverse.get(e.code);
     if (!action) return;
 
-    // `Tab` moveria o foco e `Space` rolaria a página.
-    if (e.code === 'Tab' || e.code === 'Space') e.preventDefault();
+    if (jogoFicaComATecla(e)) e.preventDefault();
 
     if (!held.has(action)) {
       // O tiro agora sai ao SOLTAR: apertar só começa a carregar.
@@ -151,6 +180,9 @@ export function createInputController(initial: Keymap = DEFAULT_KEYMAP): InputCo
   function onKeyUp(e: KeyboardEvent): void {
     const action = reverse.get(e.code);
     if (!action) return;
+    // Também ao SOLTAR: o Firefox abre a barra de menus no keyup do Alt,
+    // e barrar só o keydown deixava metade do problema de pé.
+    if (jogoFicaComATecla(e)) e.preventDefault();
     held.delete(action);
 
     if (action === 'fire' && fireHeldSince !== null) {
