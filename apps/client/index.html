@@ -22,6 +22,46 @@
   </head>
   <body>
     <canvas id="game-canvas"></canvas>
+
+    <!--
+      Aviso para quem abre este arquivo com dois cliques.
+
+      Os caminhos aqui são ABSOLUTOS (`/src/main.ts`), como o Vite exige.
+      Sob `file://` a barra inicial aponta para a raiz do disco: o
+      navegador procura `C:/src/main.ts`, não acha nada, e o jogo fica
+      numa tela preta com `net::ERR_FILE_NOT_FOUND` no console — um erro
+      que não diz o que fazer.
+
+      Este script é INLINE de propósito: um arquivo externo esbarraria na
+      mesma política que quebrou o resto da página, e o aviso sumiria
+      justamente quando é necessário.
+    -->
+    <script>
+      if (location.protocol === 'file:') {
+        document.title = 'Abra pelo servidor — Space Battle Arena';
+        var canvas = document.getElementById('game-canvas');
+        if (canvas) canvas.style.display = 'none';
+        var aviso = document.createElement('div');
+        aviso.setAttribute('role', 'alert');
+        aviso.style.cssText =
+          'position:fixed;inset:0;display:flex;align-items:center;' +
+          'justify-content:center;padding:24px;background:#04060d;' +
+          'color:#dbe6f5;font:16px/1.6 system-ui,sans-serif;text-align:center';
+        aviso.innerHTML =
+          '<div style="max-width:34rem">' +
+          '<h1 style="font-size:1.3rem;margin:0 0 .75rem">Este arquivo não roda sozinho</h1>' +
+          '<p style="margin:0 0 1rem;opacity:.85">O jogo é servido pelo Vite: aberto direto do disco, ' +
+          'o navegador procura os arquivos na raiz do disco e não encontra nada.</p>' +
+          '<p style="margin:0 0 .5rem">Suba o servidor e abra pelo endereço:</p>' +
+          '<code style="display:block;padding:.6rem 1rem;border-radius:6px;background:#0d1424;' +
+          'color:#8fd6ff;font-size:1rem">npm run dev</code>' +
+          '<p style="margin:.75rem 0 0"><a href="http://localhost:5173" ' +
+          'style="color:#8fd6ff">http://localhost:5173</a></p>' +
+          '</div>';
+        document.body.appendChild(aviso);
+      }
+    </script>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
