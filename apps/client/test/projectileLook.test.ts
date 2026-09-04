@@ -18,8 +18,10 @@ import {
   familyOf,
 } from '../src/render/ProjectileLook.js';
 import {
+  ARMA_DE_SERVICO,
   chargeMultiplier,
   primaryWeapon,
+  semCanhao,
   weaponIds,
   weaponUiInfo,
 } from '../src/data/weapons.js';
@@ -113,8 +115,11 @@ describe('catálogo de armas da interface', () => {
     expect(w?.nome).toBe('Canhão de Plasma');
   });
 
-  it('loadout sem arma nenhuma não tem primária', () => {
-    expect(primaryWeapon(['shield_bio', 'cargo_x2'])).toBeUndefined();
+  it('loadout sem arma nenhuma cai na arma de serviço', () => {
+    // Este teste afirmava o contrário — que a primária era `undefined` —
+    // e com isso fixava o defeito no lugar: o servidor SEMPRE arma a
+    // nave, e devolver nada aqui era o cliente discordando dele.
+    expect(primaryWeapon(['shield_bio', 'cargo_x2'])).toEqual(ARMA_DE_SERVICO);
   });
 
   it('o multiplicador é quadrático, igual ao do servidor', () => {
@@ -151,14 +156,22 @@ describe('paridade com o catálogo do servidor', () => {
       .toBe(true);
   });
 
-  it('tempo de carga, multiplicador e família batem com o servidor', () => {
+  it('tempo de carga, multiplicador, família, velocidade e alcance batem', () => {
     const servidor: Record<
       string,
-      { chargeTime: number; chargeDamageMult: number; visual: number }
+      {
+        chargeTime: number;
+        chargeDamageMult: number;
+        visual: number;
+        speed: number;
+        ttl: number;
+      }
     > = JSON.parse(readFileSync(FIXTURE, 'utf8'));
 
     for (const [id, esperado] of Object.entries(servidor)) {
-      const cliente = weaponUiInfo(id);
+      // `__default__` é a arma de serviço: existe no servidor sem
+      // template, porque ninguém a equipa.
+      const cliente = id === '__default__' ? ARMA_DE_SERVICO : weaponUiInfo(id);
       expect(cliente, `${id} falta no catálogo do cliente`).toBeDefined();
       expect(cliente!.tempoDeCarga, `${id}: tempo de carga`).toBeCloseTo(esperado.chargeTime, 5);
       expect(cliente!.danoMax, `${id}: multiplicador de dano`).toBeCloseTo(
@@ -166,6 +179,10 @@ describe('paridade com o catálogo do servidor', () => {
         5,
       );
       expect(cliente!.visual, `${id}: família visual`).toBe(esperado.visual);
+      // Velocidade e alcance alimentam a solução de mira: divergindo,
+      // o marcador aponta para onde o tiro NÃO vai passar.
+      expect(cliente!.velocidade, `${id}: velocidade`).toBeCloseTo(esperado.speed, 5);
+      expect(cliente!.alcanceSegundos, `${id}: alcance em segundos`).toBeCloseTo(esperado.ttl, 5);
     }
   });
 
@@ -174,5 +191,45 @@ describe('paridade com o catálogo do servidor', () => {
     for (const id of weaponIds()) {
       expect(Object.keys(servidor), `${id} só existe no cliente`).toContain(id);
     }
+  });
+});
+
+describe('nave sem canhão equipado', () => {
+  // O caso real: um loadout só de lançadores de torpedo. O servidor
+  // arma a nave assim mesmo (`DEFAULT_WEAPON`), mas o cliente devolvia
+  // `undefined` e a interface ficava MUDA — sem nome de arma, sem barra
+  // de carga e sem marcador de mira. Quem montasse essa nave atirava com
+  // um canhão que o jogo nunca mencionou e concluía que a arma estava
+  // quebrada.
+  const SO_TORPEDOS = ['torpedo_heavy', 'engine_void', 'shield_bulwark'];
+
+  it('o HUD tem o que mostrar', () => {
+    const w = primaryWeapon(SO_TORPEDOS);
+    expect(w.nome).toBe(ARMA_DE_SERVICO.nome);
+    expect(w.nome.length).toBeGreaterThan(0);
+  });
+
+  it('a solução de mira tem velocidade e alcance', () => {
+    // Sem estes dois números o marcador de impacto não é desenhável.
+    const w = primaryWeapon(SO_TORPEDOS);
+    expect(w.velocidade).toBeGreaterThan(0);
+    expect(w.alcanceSegundos).toBeGreaterThan(0);
+  });
+
+  it('a arma de serviço não carrega, e a barra diz isso', () => {
+    const w = primaryWeapon(SO_TORPEDOS);
+    expect(w.tempoDeCarga).toBe(0);
+    expect(chargeMultiplier(w, 1)).toBe(1);
+  });
+
+  it('o hangar consegue avisar antes do combate', () => {
+    expect(semCanhao(SO_TORPEDOS)).toBe(true);
+    expect(semCanhao(['railgun_s', ...SO_TORPEDOS])).toBe(false);
+  });
+
+  it('um canhão equipado ainda vence a arma de serviço', () => {
+    // A rede de segurança não pode virar o caso comum.
+    expect(primaryWeapon(['railgun_s', 'engine_void']).nome).toBe('Canhão Linear');
+    expect(primaryWeapon([...SO_TORPEDOS, 'plasma_m']).nome).toBe('Canhão de Plasma');
   });
 });

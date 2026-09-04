@@ -91,9 +91,39 @@ pub async fn serve_on(
         let state = state.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_conn(stream, peer.to_string(), state).await {
-                warn!(%peer, error = %e, "connection ended with error");
+                // Sumir sem se despedir é o normal, não uma falha.
+                if desconexao_normal(&e) {
+                    debug!(%peer, error = %e, "cliente desconectou sem handshake");
+                } else {
+                    warn!(%peer, error = %e, "connection ended with error");
+                }
             }
         });
+    }
+}
+
+/// A conexão caiu do jeito que conexões caem, ou algo deu errado?
+///
+/// Fechar a aba, recarregar a página, perder o wi-fi ou a máquina dormir
+/// derrubam o socket SEM handshake de fechamento — o servidor lê um
+/// "fim de arquivo inesperado" ou leva um reset do outro lado. Nada
+/// disso é defeito, e registrar tudo como `WARN` fazia o log gritar a
+/// cada jogador que saía do jogo, escondendo os erros de verdade no meio
+/// do ruído.
+fn desconexao_normal(e: &WsError) -> bool {
+    use tokio_tungstenite::tungstenite::error::ProtocolError;
+    match e {
+        WsError::ConnectionClosed | WsError::AlreadyClosed => true,
+        WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake) => true,
+        WsError::Io(io) => matches!(
+            io.kind(),
+            std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::NotConnected
+                | std::io::ErrorKind::UnexpectedEof
+        ),
+        _ => false,
     }
 }
 
@@ -248,4 +278,50 @@ async fn handle_conn(
     info!(%peer, player_id, "ws closed");
     state.unregister_client(player_id).await;
     result
+}
+
+#[cfg(test)]
+mod desconexoes {
+    //! Sair do jogo não é um erro.
+    //!
+    //! O log gritava `WARN connection ended with error` toda vez que
+    //! alguém fechava a aba — e um log que grita pelo normal esconde o
+    //! anormal.
+
+    use super::desconexao_normal;
+    use tokio_tungstenite::tungstenite::error::ProtocolError;
+    use tokio_tungstenite::tungstenite::Error as WsError;
+
+    fn io(kind: std::io::ErrorKind) -> WsError {
+        WsError::Io(std::io::Error::new(kind, "teste"))
+    }
+
+    #[test]
+    fn fechar_a_aba_nao_e_erro() {
+        // Foi este que apareceu no Windows: os error 10054.
+        assert!(desconexao_normal(&io(std::io::ErrorKind::ConnectionReset)));
+        // E este é o "unexpected end of file" do relato.
+        assert!(desconexao_normal(&io(std::io::ErrorKind::UnexpectedEof)));
+        assert!(desconexao_normal(&io(std::io::ErrorKind::ConnectionAborted)));
+        assert!(desconexao_normal(&io(std::io::ErrorKind::BrokenPipe)));
+    }
+
+    #[test]
+    fn sumir_sem_handshake_nao_e_erro() {
+        assert!(desconexao_normal(&WsError::Protocol(
+            ProtocolError::ResetWithoutClosingHandshake
+        )));
+        assert!(desconexao_normal(&WsError::ConnectionClosed));
+        assert!(desconexao_normal(&WsError::AlreadyClosed));
+    }
+
+    #[test]
+    fn falha_de_verdade_continua_aparecendo() {
+        // O silêncio não pode virar a regra: um cliente falando errado o
+        // protocolo, ou uma rede em pane, precisa continuar visível.
+        assert!(!desconexao_normal(&WsError::Protocol(
+            ProtocolError::WrongHttpMethod
+        )));
+        assert!(!desconexao_normal(&io(std::io::ErrorKind::PermissionDenied)));
+    }
 }

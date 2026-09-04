@@ -8,6 +8,7 @@ import { createPilotCard, loadPilotProfile, savePilotProfile } from './PilotCard
 import { pilotClassById } from '../data/pilots';
 import type { PilotProfile } from '../data/pilots';
 import { detailFromTiers, type ChassisSpec, type ChassisKind } from '../render/ShipMesh';
+import { semCanhao } from '../data/weapons';
 import './HangarScreen.css';
 
 /**
@@ -272,6 +273,13 @@ export class HangarScreen {
             <div class="ship-name">${escapeHtml(this.selectedName())}</div>
             <div class="ship-class">${escapeHtml(chassisLabel(this.chassisSpec().kind))}</div>
           </div>
+          ${
+            semCanhao(this.getSelectedSlots().map((sl) => sl.templateId))
+              ? `<div class="hangar-notice bad" role="status">Sem canhão primário: esta nave sai com o
+                  Canhão de Serviço (dano 8, sem carga). Equipe uma arma no Estaleiro.</div>`
+              : ''
+          }
+
           <div class="hangar-cta">
             <button class="btn ${this.modo === 'blueprint' ? 'btn-primary' : ''}"
                     id="hangar-mode">${this.modo === 'blueprint' ? 'Vitrine' : 'Esquema'}</button>

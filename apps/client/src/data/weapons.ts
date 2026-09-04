@@ -72,6 +72,28 @@ const ARMAS: Record<string, WeaponUiInfo> = {
   },
 };
 
+/**
+ * Arma de serviço: o que o servidor dá a quem voa sem canhão.
+ *
+ * Não é um template — ninguém a equipa. É o `DEFAULT_WEAPON` de
+ * `resolve_loadout`, e existe para que voar desarmado seja uma
+ * desvantagem real sem deixar o jogador sem resposta nenhuma.
+ *
+ * Faltava aqui, e a consequência era pior que a arma fraca: a interface
+ * ficava MUDA. Sem nome no HUD, sem barra de carga e sem marcador de
+ * mira, quem montasse uma nave só de torpedos atirava com um canhão que
+ * o jogo nunca mencionou e concluía, com razão, que a arma estava
+ * quebrada.
+ */
+export const ARMA_DE_SERVICO: WeaponUiInfo = {
+  nome: 'Canhão de Serviço',
+  tempoDeCarga: 0,
+  danoMax: 1,
+  visual: WEAPON_VISUAL.Kinetic,
+  velocidade: 100,
+  alcanceSegundos: 3,
+};
+
 export function weaponUiInfo(templateId: string): WeaponUiInfo | undefined {
   return ARMAS[templateId];
 }
@@ -88,12 +110,19 @@ export function weaponIds(): string[] {
  * é a primária. Se as duas pontas discordassem sobre qual é, a barra de
  * carga mostraria uma arma e o tiro sairia de outra.
  */
-export function primaryWeapon(templateIds: readonly string[]): WeaponUiInfo | undefined {
+export function primaryWeapon(templateIds: readonly string[]): WeaponUiInfo {
   for (const id of templateIds) {
     const w = ARMAS[id];
     if (w) return w;
   }
-  return undefined;
+  // Nunca `undefined`: o servidor SEMPRE arma a nave, e devolver nada
+  // aqui fazia o HUD esconder o que ela de fato dispara.
+  return ARMA_DE_SERVICO;
+}
+
+/** A nave está com a arma de serviço, isto é, sem canhão equipado? */
+export function semCanhao(templateIds: readonly string[]): boolean {
+  return !templateIds.some((id) => id in ARMAS);
 }
 
 /**

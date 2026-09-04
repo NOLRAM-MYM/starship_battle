@@ -1,6 +1,7 @@
 {
-  "railgun_s": { "chargeTime": 0.9, "chargeDamageMult": 2.6, "visual": 0 },
-  "laser_burst": { "chargeTime": 0, "chargeDamageMult": 1, "visual": 1 },
-  "plasma_m": { "chargeTime": 1.6, "chargeDamageMult": 3, "visual": 2 },
-  "lance_singular": { "chargeTime": 2.5, "chargeDamageMult": 3.4, "visual": 3 }
+  "railgun_s": { "chargeTime": 0.9, "chargeDamageMult": 2.6, "visual": 0, "speed": 190, "ttl": 2.6 },
+  "laser_burst": { "chargeTime": 0, "chargeDamageMult": 1, "visual": 1, "speed": 240, "ttl": 1.8 },
+  "plasma_m": { "chargeTime": 1.6, "chargeDamageMult": 3, "visual": 2, "speed": 120, "ttl": 3.4 },
+  "lance_singular": { "chargeTime": 2.5, "chargeDamageMult": 3.4, "visual": 3, "speed": 320, "ttl": 4 },
+  "__default__": { "chargeTime": 0, "chargeDamageMult": 1, "visual": 0, "speed": 100, "ttl": 3 }
 }

@@ -641,8 +641,8 @@ async function bootstrap(): Promise<void> {
     // números vêm do espelho do catálogo do servidor — quem calcula o
     // efeito do tiro continua sendo o servidor.
     const armaPrimaria = primaryWeapon(slots.map((sl) => sl.templateId));
-    const tempoDeCarga = armaPrimaria?.tempoDeCarga ?? 0;
-    hudState.weaponName = armaPrimaria?.nome ?? null;
+    const tempoDeCarga = armaPrimaria.tempoDeCarga;
+    hudState.weaponName = armaPrimaria.nome;
 
     const input = createInputController(keymap);
     input.attach();
@@ -885,7 +885,7 @@ async function bootstrap(): Promise<void> {
       const cargaSegs = input.currentCharge();
       const fracao = tempoDeCarga > 0 ? Math.min(1, cargaSegs / tempoDeCarga) : 0;
       hudState.fireCharge = fracao;
-      hudState.chargeMult = armaPrimaria ? chargeMultiplier(armaPrimaria, fracao) : 1;
+      hudState.chargeMult = chargeMultiplier(armaPrimaria, fracao);
       // A própria nave também acusa a carga: um brilho crescente no
       // cano. Sem isso o único retorno estava numa barra de 4px, e
       // segurar o gatilho parecia não fazer nada.
@@ -1017,9 +1017,7 @@ async function bootstrap(): Promise<void> {
             hudState.position,
             forward,
             contacts,
-            armaPrimaria
-              ? { weaponRange: armaPrimaria.velocidade * armaPrimaria.alcanceSegundos }
-              : {},
+            { weaponRange: armaPrimaria.velocidade * armaPrimaria.alcanceSegundos },
           );
         if (target) {
           hudState.targetId = target.id;
@@ -1083,7 +1081,7 @@ async function bootstrap(): Promise<void> {
       // exigir Tab aqui produzia a situação absurda de o HUD mostrar um
       // alvo e a mira simplesmente não existir. Por isso este bloco fica
       // DEPOIS da resolução do alvo, e não antes.
-      if (armaPrimaria && target) {
+      if (target) {
         // A posição vem do CONTATO já resolvido, não de uma nova varredura
         // das naves remotas: o alvo automático também escolhe entidades de
         // mundo (asteroides, destroços), e procurá-lo só entre naves fazia

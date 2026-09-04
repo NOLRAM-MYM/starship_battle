@@ -777,14 +777,30 @@ mod weapon_fixture {
     fn escreve_catalogo_para_o_cliente() {
         let ids = ["railgun_s", "laser_burst", "plasma_m", "lance_singular"];
         let mut linhas: Vec<String> = Vec::new();
-        for id in ids {
-            let w = weapon_profile(id).expect("arma do catálogo");
+        // A arma de serviço entra na tabela como as outras.
+        //
+        // Ela não tem template porque ninguém a equipa: é o que
+        // `resolve_loadout` devolve para quem voa sem canhão. Ficando de
+        // fora daqui, o cliente não tinha o que mostrar para essa nave —
+        // e a paridade passava, porque só comparava o que os dois lados
+        // já concordavam que existia.
+        let todas: Vec<(&str, sim_core::ship::weapons::WeaponProfile)> = ids
+            .iter()
+            .map(|id| (*id, weapon_profile(id).expect("arma do catálogo")))
+            .chain(std::iter::once((
+                "__default__",
+                sim_core::ship::weapons::DEFAULT_WEAPON,
+            )))
+            .collect();
+        for (id, w) in todas {
             linhas.push(format!(
-                "  \"{}\": {{ \"chargeTime\": {}, \"chargeDamageMult\": {}, \"visual\": {} }}",
+                "  \"{}\": {{ \"chargeTime\": {}, \"chargeDamageMult\": {}, \"visual\": {}, \"speed\": {}, \"ttl\": {} }}",
                 id,
                 w.charge_time,
                 w.charge_damage_mult,
-                w.visual.to_index()
+                w.visual.to_index(),
+                w.speed,
+                w.ttl
             ));
         }
         let json = format!("{{\n{}\n}}\n", linhas.join(",\n"));
