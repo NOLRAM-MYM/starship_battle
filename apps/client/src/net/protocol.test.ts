@@ -5,6 +5,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   decodeServerMsg,
   encodeClientMsg,
@@ -416,5 +418,84 @@ describe('protocol types sanity', () => {
       { type: 'Error', payload: { reason: 'x' } },
     ];
     expect(msgs).toHaveLength(8);
+  });
+});
+
+describe('paridade de bytes do Input com o servidor', () => {
+  // Este bloco existe por causa de um defeito que passou por baixo do
+  // teste acima: o cliente escrevia `fineControl` ANTES de `aimTarget`,
+  // e o servidor lia o byte da mira fina como o marcador do
+  // `Option<aim_target>`. Segurando a mira, ele tentava ler um id de 4
+  // bytes que não existia e descartava o pacote inteiro — o comando
+  // sumia: leme, aceleração e tiro juntos.
+  //
+  // O teste antigo passava porque usava o ÚNICO caso que funciona por
+  // acidente: mira fina desligada e sem alvo, dois zeros que dão no
+  // mesmo trocados. Ele comparava contra a ordem que eu achava correta,
+  // e era ela que estava errada.
+  //
+  // Por isso a referência aqui não é uma leitura minha do enum: são os
+  // bytes que o serializador do servidor produz, gerados por
+  // `cargo test -p game-server escreve_inputs_de_referencia`.
+  const FIXTURE = join(process.cwd(), 'src/net/__fixtures__/client_input.json');
+
+  /** Payload base; cada caso muda só o que o seu nome diz. */
+  const base = {
+    steer: 0.25,
+    pitch: -0.5,
+    roll: 0.75,
+    thrust: 1.0,
+    fire: true,
+    fireCharge: 1.5,
+    skill: null,
+    useConsumable: null,
+    launchTorpedo: null,
+    deployDecoys: false,
+    aimTarget: null,
+    fineControl: false,
+  } as const;
+
+  const CASOS: Record<string, Record<string, unknown>> = {
+    neutro: {},
+    mira_fina: { fineControl: true },
+    alvo_mirado: { aimTarget: 4242 },
+    mira_fina_com_alvo: { aimTarget: 4242, fineControl: true },
+    iscas: { deployDecoys: true, fineControl: true },
+    tudo: {
+      skill: 'Dash',
+      useConsumable: 1,
+      launchTorpedo: 77,
+      deployDecoys: true,
+      aimTarget: 4242,
+      fineControl: true,
+    },
+  };
+
+  const hex = (b: Uint8Array): string =>
+    Array.from(b)
+      .map((x) => x.toString(16).padStart(2, '0'))
+      .join('');
+
+  it('a fixture existe (gerada pelo servidor)', () => {
+    expect(
+      existsSync(FIXTURE),
+      'gere com `cargo test -p game-server escreve_inputs_de_referencia`',
+    ).toBe(true);
+  });
+
+  it('cada combinação bate byte a byte com o servidor', () => {
+    const esperado: Record<string, string> = JSON.parse(readFileSync(FIXTURE, 'utf8'));
+    for (const [nome, delta] of Object.entries(CASOS)) {
+      const msg = { type: 'Input', payload: { ...base, ...delta } } as ClientMsg;
+      expect(hex(encodeClientMsg(msg)), `caso "${nome}"`).toBe(esperado[nome]);
+    }
+  });
+
+  it('a fixture cobre a mira fina segurada', () => {
+    // A combinação que o defeito matava não pode sumir da lista: sem
+    // ela, a troca de ordem volta a passar despercebida.
+    const esperado = JSON.parse(readFileSync(FIXTURE, 'utf8'));
+    expect(Object.keys(esperado)).toContain('mira_fina');
+    expect(esperado['mira_fina']).not.toBe(esperado['neutro']);
   });
 });

@@ -770,8 +770,83 @@ mod golden {
 /// teste do cliente quebra.
 #[cfg(test)]
 mod weapon_fixture {
+    use super::ClientMsg;
     use sim_core::ship::weapons::weapon_profile;
     use std::io::Write;
+
+    /// Bytes de `ClientMsg::Input` gerados pelo PRÓPRIO servidor.
+    ///
+    /// O teste do cliente comparava contra a ordem de campos que eu
+    /// achava correta, e a que eu achava correta estava errada: o
+    /// cliente escrevia `fine_control` antes de `aim_target`, e o
+    /// servidor lia o byte da mira fina como o marcador do
+    /// `Option<aim_target>`. Segurando a mira, o servidor tentava ler um
+    /// id de 4 bytes inexistente e DESCARTAVA O PACOTE — o comando
+    /// inteiro sumia. O teste passava porque usava o único caso que
+    /// funciona por acidente: mira fina desligada e sem alvo, os dois
+    /// zeros na ordem trocada.
+    ///
+    /// A lição: para a direção cliente→servidor, a verdade tem que sair
+    /// do serializador do servidor, não de uma leitura minha do enum.
+    #[test]
+    fn escreve_inputs_de_referencia() {
+        use sim_core::skills::ActiveSkill;
+
+        fn entrada(
+            skill: Option<ActiveSkill>,
+            use_consumable: Option<u8>,
+            launch_torpedo: Option<u32>,
+            deploy_decoys: bool,
+            aim_target: Option<u32>,
+            fine_control: bool,
+        ) -> ClientMsg {
+            ClientMsg::Input {
+                steer: 0.25,
+                pitch: -0.5,
+                roll: 0.75,
+                thrust: 1.0,
+                fire: true,
+                fire_charge: 1.5,
+                skill,
+                use_consumable,
+                launch_torpedo,
+                deploy_decoys,
+                aim_target,
+                fine_control,
+            }
+        }
+
+        // Cada caso existe para quebrar uma troca de ordem diferente.
+        let casos: Vec<(&str, ClientMsg)> = vec![
+            ("neutro", entrada(None, None, None, false, None, false)),
+            // O caso que o defeito matava: mira fina segurada.
+            ("mira_fina", entrada(None, None, None, false, None, true)),
+            ("alvo_mirado", entrada(None, None, None, false, Some(4242), false)),
+            ("mira_fina_com_alvo", entrada(None, None, None, false, Some(4242), true)),
+            ("iscas", entrada(None, None, None, true, None, true)),
+            (
+                "tudo",
+                entrada(Some(ActiveSkill::Dash), Some(1), Some(77), true, Some(4242), true),
+            ),
+        ];
+
+        let mut linhas: Vec<String> = Vec::new();
+        for (nome, msg) in &casos {
+            let bytes = bincode::serialize(msg).unwrap();
+            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            linhas.push(format!("  \"{nome}\": \"{hex}\""));
+        }
+        let json = format!("{{
+{}
+}}
+", linhas.join(",
+"));
+
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/client/src/net/__fixtures__");
+        std::fs::create_dir_all(dir).unwrap();
+        let mut f = std::fs::File::create(format!("{dir}/client_input.json")).unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+    }
 
     #[test]
     fn escreve_catalogo_para_o_cliente() {

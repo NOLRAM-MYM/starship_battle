@@ -698,13 +698,21 @@ export function encodeClientMsg(msg: ClientMsg): Uint8Array {
         w.writeU32(msg.payload.launchTorpedo);
       }
       w.writeBool(msg.payload.deployDecoys);
-      w.writeBool(msg.payload.fineControl);
+      // v14: alvo mirado ANTES do modo de precisão.
+      //
+      // A ordem é a da declaração em Rust, e estava invertida aqui. O
+      // servidor lia o byte de `fineControl` como o marcador do
+      // `Option<aim_target>`: com a mira fina segurada esse byte é 1, o
+      // servidor então tentava ler um id de 4 bytes que não existia, e
+      // DESCARTAVA O PACOTE INTEIRO. Segurar a mira desligava todo o
+      // comando — leme, aceleração, tiro — em vez de refiná-lo.
       if (msg.payload.aimTarget === null || msg.payload.aimTarget === undefined) {
         w.writeU8(0);
       } else {
         w.writeU8(1);
         w.writeU32(msg.payload.aimTarget);
       }
+      w.writeBool(msg.payload.fineControl);
       break;
     case 'Ping':
       w.writeU32(CLIENT_VARIANT.Ping);

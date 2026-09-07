@@ -8,6 +8,8 @@
  * endereços literais respondiam normalmente. Um IP literal não passa pelo
  * resolvedor.
  */
+import { mensagemDeErro, mensagemDeRedeIndisponivel } from './apiErrors';
+
 const API_BASE_URL = 'http://127.0.0.1:8080/auth';
 
 export interface AuthResponse {
@@ -27,25 +29,35 @@ export interface AuthCredentials {
 /**
  * Função auxiliar para tratar as respostas da API e padronizar os erros
  */
-async function handleResponse(response: Response): Promise<AuthResponse> {
+async function handleResponse(response: Response, acao: string): Promise<AuthResponse> {
   let data;
   try {
     data = await response.json();
-  } catch (err) {
-    // Caso a resposta não seja um JSON válido e o status seja de erro
+  } catch {
     if (!response.ok) {
-      throw new Error(`Erro na requisição: ${response.status} ${response.statusText}`);
+      throw new Error(mensagemDeErro(response.status, null, acao));
     }
     return {} as AuthResponse;
   }
 
   if (!response.ok) {
-    // Lança um erro utilizando a mensagem retornada pela API ou um texto genérico
-    const errorMessage = data?.message || data?.error || `Erro HTTP: ${response.status}`;
-    throw new Error(errorMessage);
+    // A mensagem crua da API não serve ao jogador: com o banco fora do
+    // ar ela é "Internal Server Error", em inglês e sem dizer de quem é
+    // o problema nem o que fazer.
+    throw new Error(mensagemDeErro(response.status, data, acao));
   }
 
   return data;
+}
+
+/**
+ * `fetch` rejeita com `TypeError: Failed to fetch` quando a API está
+ * desligada. Repassar isso mostraria ao jogador uma mensagem que não diz
+ * a quem pertence o problema.
+ */
+function traduzFalhaDeRede(erro: unknown, acao: string): Error {
+  if (erro instanceof TypeError) return new Error(mensagemDeRedeIndisponivel(acao));
+  return erro instanceof Error ? erro : new Error(mensagemDeRedeIndisponivel(acao));
 }
 
 /**
@@ -64,10 +76,10 @@ export async function register(credentials: AuthCredentials): Promise<AuthRespon
       body: JSON.stringify(credentials),
     });
     
-    return await handleResponse(response);
+    return await handleResponse(response, 'registrar');
   } catch (error) {
     console.error('Erro no registro (authApi):', error);
-    throw error; // Repassa o erro para ser tratado pela UI
+    throw traduzFalhaDeRede(error, 'registrar');
   }
 }
 
@@ -87,9 +99,9 @@ export async function login(credentials: AuthCredentials): Promise<AuthResponse>
       body: JSON.stringify(credentials),
     });
 
-    return await handleResponse(response);
+    return await handleResponse(response, 'entrar');
   } catch (error) {
     console.error('Erro no login (authApi):', error);
-    throw error; // Repassa o erro para ser tratado pela UI
+    throw traduzFalhaDeRede(error, 'entrar');
   }
 }

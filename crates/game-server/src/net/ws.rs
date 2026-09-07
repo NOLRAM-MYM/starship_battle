@@ -138,7 +138,7 @@ async fn handle_conn(
 
     // Aloca player_id e fila de saída limitada.
     let player_id = state.alloc_player_id();
-    let mut rx = state.register_client(player_id).await;
+    let (mut rx, desistir) = state.register_client(player_id).await;
 
     // Envia Welcome.
     let world_seed = state.world_seed().await;
@@ -264,12 +264,33 @@ async fn handle_conn(
                     }
                 }
             }
+            // O servidor desistiu deste cliente: encerra AGORA, sem
+            // esperar a fila escoar. Sem este braço, a conexão ficava
+            // aberta enquanto os frames enfileirados atravessavam um
+            // socket travado — e nesse intervalo o jogador voava às
+            // cegas, com a tela congelada e a nave ainda se movendo.
+            _ = desistir.notified() => {
+                break Ok(());
+            }
             frame = rx.recv() => {
                 let Some(frame) = frame else { break Ok(()); };
                 // O frame já vem serializado e compartilhado por Arc:
                 // nenhuma cópia do payload por cliente.
-                if let Err(e) = write.send(Message::Binary(frame.as_ref().clone())).await {
-                    break Err(e);
+                //
+                // A escrita precisa ser CANCELÁVEL. Num cliente travado
+                // ela fica pendurada na contrapressão do TCP por dezenas
+                // de segundos, e enquanto isso o `select!` de fora não é
+                // consultado — a ordem de encerrar chegava e ficava
+                // esperando a escrita que ela deveria interromper.
+                tokio::select! {
+                    r = write.send(Message::Binary(frame.as_ref().clone())) => {
+                        if let Err(e) = r {
+                            break Err(e);
+                        }
+                    }
+                    _ = desistir.notified() => {
+                        break Ok(());
+                    }
                 }
             }
         }

@@ -24,7 +24,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Notify, RwLock};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, warn};
 
@@ -90,9 +90,39 @@ pub enum PlayerCommand {
     },
 }
 
+/// Descarta um cliente AVISANDO a conexão a se encerrar.
+///
+/// Existe como função única porque a parte fácil (tirar do mapa) e a
+/// parte que importa (mandar fechar) estavam separadas: havia quatro
+/// pontos de remoção, e bastava um esquecer o aviso para o jogador ficar
+/// preso numa conexão que o servidor já tinha abandonado.
+fn descarta_cliente(clients: &mut HashMap<u32, ClientHandle>, id: u32, motivo: &str) {
+    if let Some(h) = clients.remove(&id) {
+        // `notify_one` e não `notify_waiters`: guarda a permissão mesmo
+        // se a conexão ainda não estiver esperando neste instante, e
+        // assim o aviso não se perde por questão de tempo.
+        h.desistir.notify_one();
+        warn!(player_id = id, motivo, "cliente descartado");
+    }
+}
+
 /// Handle para um client conectado.
 pub struct ClientHandle {
     pub tx: mpsc::Sender<Frame>,
+    /// Ordem de encerrar a conexão deste cliente, agora.
+    ///
+    /// Largar o `tx` não basta. O receptor só devolve `None` depois de
+    /// ESVAZIAR a fila, e a fila só esvazia na velocidade do socket — que
+    /// num cliente travado é justamente o problema. Medido: o servidor
+    /// desistia do cliente e a conexão ficava mais de 50 segundos aberta,
+    /// escoando frames velhos.
+    ///
+    /// Nesse intervalo o jogador voava às cegas: a tela congelava, a nave
+    /// continuava se movendo no servidor, os comandos continuavam
+    /// chegando, e o cliente nem sabia que precisava reconectar — o
+    /// socket, para ele, ainda estava aberto. Era exatamente o "o
+    /// servidor caiu" que se via do lado de cá.
+    pub desistir: Arc<Notify>,
     /// Entidades estáticas que este cliente já recebeu. Evita reenviar
     /// asteroides parados a cada tick.
     pub known_static: HashSet<EntityId>,
@@ -101,9 +131,10 @@ pub struct ClientHandle {
 }
 
 impl ClientHandle {
-    pub fn new(tx: mpsc::Sender<Frame>) -> Self {
+    pub fn new(tx: mpsc::Sender<Frame>, desistir: Arc<Notify>) -> Self {
         Self {
             tx,
+            desistir,
             known_static: HashSet::new(),
             consecutive_drops: 0,
         }
@@ -183,17 +214,20 @@ impl ServerState {
     }
 
     /// Registra um cliente e devolve o receptor de frames.
-    pub async fn register_client(&self, player_id: u32) -> mpsc::Receiver<Frame> {
+    pub async fn register_client(&self, player_id: u32) -> (mpsc::Receiver<Frame>, Arc<Notify>) {
         let (tx, rx) = mpsc::channel(CLIENT_QUEUE_DEPTH);
+        let desistir = Arc::new(Notify::new());
         self.clients
             .write()
             .await
-            .insert(player_id, ClientHandle::new(tx));
-        rx
+            .insert(player_id, ClientHandle::new(tx, Arc::clone(&desistir)));
+        (rx, desistir)
     }
 
     pub async fn unregister_client(&self, player_id: u32) {
-        self.clients.write().await.remove(&player_id);
+        let mut clients = self.clients.write().await;
+        descarta_cliente(&mut clients, player_id, "conexão encerrada");
+        drop(clients);
         self.enqueue(PlayerCommand::Leave { player_id });
     }
 
@@ -209,7 +243,7 @@ impl ServerState {
         let mut clients = self.clients.write().await;
         if let Some(h) = clients.get_mut(&player_id) {
             if !h.try_send(&frame) {
-                clients.remove(&player_id);
+                descarta_cliente(&mut clients, player_id, "envio direto falhou");
             }
         }
     }
@@ -231,8 +265,7 @@ impl ServerState {
             }
         }
         for id in dead {
-            warn!(player_id = id, "cliente removido: fila saturada ou fechada");
-            clients.remove(&id);
+            descarta_cliente(&mut clients, id, "fila saturada ou fechada");
         }
     }
 
@@ -530,8 +563,7 @@ async fn broadcast_snapshots(state: &ServerState) {
     }
 
     for id in dead {
-        warn!(player_id = id, "cliente removido no broadcast de snapshot");
-        clients.remove(&id);
+        descarta_cliente(&mut clients, id, "atrasado no broadcast de snapshot");
     }
 }
 
@@ -631,7 +663,7 @@ mod tests {
     #[tokio::test]
     async fn broadcast_drops_client_that_never_drains() {
         let state = ServerState::new();
-        let _rx = state.register_client(1).await;
+        let (_rx, _) = state.register_client(1).await;
         // Enche a fila muito além da profundidade sem ler nada.
         for _ in 0..(CLIENT_QUEUE_DEPTH as u32 + MAX_CONSECUTIVE_DROPS + 5) {
             state.broadcast(ServerMsg::Pong { nonce: 1 }).await;
@@ -645,7 +677,7 @@ mod tests {
     #[tokio::test]
     async fn broadcast_keeps_client_that_drains() {
         let state = ServerState::new();
-        let mut rx = state.register_client(2).await;
+        let (mut rx, _) = state.register_client(2).await;
         for _ in 0..200 {
             state.broadcast(ServerMsg::Pong { nonce: 7 }).await;
             let _ = rx.try_recv();
@@ -703,5 +735,73 @@ mod sentinela_de_dono {
         let a = state.alloc_player_id();
         let b = state.alloc_player_id();
         assert_ne!(a, b);
+    }
+}
+
+#[cfg(test)]
+mod desistir_de_cliente {
+    //! Desistir de um cliente tem que CHEGAR ao cliente.
+    //!
+    //! Largar o canal não bastava: o receptor só devolve `None` depois de
+    //! esvaziar a fila, e a fila só esvazia na velocidade do socket — que
+    //! num cliente travado é justamente o problema. Medido no jogo real:
+    //! o servidor desistia e a conexão seguia aberta por mais de 50
+    //! segundos. Nesse intervalo o jogador voava às cegas — tela
+    //! congelada, nave ainda se movendo no servidor, e nenhum sinal de
+    //! que era hora de reconectar.
+
+    use super::*;
+
+    /// O aviso já está disponível, sem esperar?
+    async fn avisado(n: &Notify) -> bool {
+        tokio::time::timeout(std::time::Duration::from_millis(50), n.notified())
+            .await
+            .is_ok()
+    }
+
+    #[tokio::test]
+    async fn cliente_atrasado_recebe_ordem_de_encerrar() {
+        let state = ServerState::new();
+        let (_rx, desistir) = state.register_client(9).await;
+
+        // `_rx` existe mas NUNCA é lido: é o cliente travado.
+        let frame: Frame = Arc::new(vec![0u8; 8]);
+        for _ in 0..(CLIENT_QUEUE_DEPTH as u32 + MAX_CONSECUTIVE_DROPS + 5) {
+            state.broadcast_frame(&frame).await;
+        }
+
+        assert!(
+            !state.clients.read().await.contains_key(&9),
+            "o cliente atrasado deveria ter sido descartado"
+        );
+        assert!(
+            avisado(&desistir).await,
+            "descartar sem avisar deixa a conexão aberta e o jogador às cegas"
+        );
+    }
+
+    #[tokio::test]
+    async fn cliente_que_le_continua_conectado() {
+        // A rede de segurança não pode virar o caso comum: quem drena a
+        // fila não pode ser desconectado.
+        let state = ServerState::new();
+        let (mut rx, desistir) = state.register_client(4).await;
+        let frame: Frame = Arc::new(vec![0u8; 8]);
+
+        for _ in 0..(CLIENT_QUEUE_DEPTH as u32 + MAX_CONSECUTIVE_DROPS + 5) {
+            state.broadcast_frame(&frame).await;
+            while rx.try_recv().is_ok() {}
+        }
+
+        assert!(state.clients.read().await.contains_key(&4));
+        assert!(!avisado(&desistir).await, "quem lê não pode ser desconectado");
+    }
+
+    #[tokio::test]
+    async fn sair_normalmente_tambem_avisa() {
+        let state = ServerState::new();
+        let (_rx, desistir) = state.register_client(3).await;
+        state.unregister_client(3).await;
+        assert!(avisado(&desistir).await);
     }
 }
