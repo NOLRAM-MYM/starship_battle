@@ -136,9 +136,14 @@ export function connect(opts: NetClientOptions): NetClient {
     send(msg: ClientMsg): void {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(encodeClientMsg(msg));
-      } else {
-        console.warn('[net] drop msg, socket not open', msg.type);
+        return;
       }
+      // Enquanto CONECTA, descartar é o esperado: o laço de entrada roda
+      // a 30Hz e começa antes do socket abrir, então toda partida
+      // começava com um punhado de avisos que pareciam defeito e não
+      // eram. Só o que acontece com o socket JÁ FECHADO merece registro.
+      if (ws && ws.readyState === WebSocket.CONNECTING) return;
+      console.warn('[net] mensagem descartada, socket fechado:', msg.type);
     },
     onMessage(handler): void {
       handlers.push(handler);
