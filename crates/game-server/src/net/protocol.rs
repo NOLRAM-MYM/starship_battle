@@ -770,7 +770,7 @@ mod golden {
 /// teste do cliente quebra.
 #[cfg(test)]
 mod weapon_fixture {
-    use super::ClientMsg;
+    use super::{ClientMsg, PROTOCOL_VERSION};
     use sim_core::ship::weapons::weapon_profile;
     use std::io::Write;
 
@@ -836,6 +836,42 @@ mod weapon_fixture {
             let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
             linhas.push(format!("  \"{nome}\": \"{hex}\""));
         }
+        // O `Join` corre o mesmo risco do `Input` — é a outra mensagem
+        // que o cliente monta à mão — e nunca teve conferência de bytes.
+        use sim_core::ship::consumables::ConsumableSlot;
+        let joins: Vec<(&str, ClientMsg)> = vec![
+            (
+                "join_minimo",
+                ClientMsg::Join {
+                    name: "piloto".into(),
+                    protocol: PROTOCOL_VERSION,
+                    loadout: vec![],
+                    skills: vec![],
+                    consumables: vec![],
+                    practice: false,
+                },
+            ),
+            (
+                "join_completo",
+                ClientMsg::Join {
+                    name: "piloto".into(),
+                    protocol: PROTOCOL_VERSION,
+                    loadout: vec!["railgun_s".into(), "engine_mk3".into()],
+                    skills: vec!["dash_1".into()],
+                    consumables: vec![ConsumableSlot {
+                        template_id: "shield_cell".into(),
+                        charges: 3,
+                    }],
+                    practice: true,
+                },
+            ),
+        ];
+        for (nome, msg) in &joins {
+            let bytes = bincode::serialize(msg).unwrap();
+            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            linhas.push(format!("  \"{nome}\": \"{hex}\""));
+        }
+
         let json = format!("{{
 {}
 }}
@@ -845,6 +881,68 @@ mod weapon_fixture {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/client/src/net/__fixtures__");
         std::fs::create_dir_all(dir).unwrap();
         let mut f = std::fs::File::create(format!("{dir}/client_input.json")).unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+    }
+
+    /// Bytes de cada `ServerMsg` que o cliente sabe decodificar.
+    ///
+    /// O `snapshot_v6.bin` amarrava só o `Snapshot`. As outras onze
+    /// variantes chegavam ao cliente sem nenhuma conferência de bytes —
+    /// a mesma lacuna que deixou passar a troca de ordem no `Input`,
+    /// onde o teste comparava contra a minha leitura do enum em vez do
+    /// serializador de verdade.
+    ///
+    /// Uma variante inserida no meio do enum desloca todas as seguintes,
+    /// e o sintoma seria o cliente desenhando um efeito no lugar de
+    /// outro — ou explodindo ao ler um campo com o tamanho errado.
+    #[test]
+    fn escreve_mensagens_do_servidor() {
+        use super::ServerMsg;
+
+        let casos: Vec<(&str, ServerMsg)> = vec![
+            (
+                "welcome",
+                ServerMsg::Welcome {
+                    player_id: 7,
+                    protocol: PROTOCOL_VERSION,
+                    tick_rate: 20,
+                    world_seed: 0xC0FF_EE00,
+                },
+            ),
+            ("entity_destroyed", ServerMsg::EntityDestroyed { entity_id: 99 }),
+            ("xp_gained", ServerMsg::XpGained { amount: 250, reason: "kill".into() }),
+            (
+                "skill_activated",
+                ServerMsg::SkillActivated {
+                    entity_id: 3,
+                    skill: sim_core::skills::ActiveSkill::Emp,
+                },
+            ),
+            ("vfx", ServerMsg::Vfx { effect_id: 2, pos: [1.0, -2.0, 3.5] }),
+            ("pong", ServerMsg::Pong { nonce: 0xDEAD_BEEF }),
+            ("erro", ServerMsg::Error { reason: "motivo".into() }),
+            (
+                "consumable_used",
+                ServerMsg::ConsumableUsed { entity_id: 5, slot: 1, vfx: 3, charges_left: 2 },
+            ),
+            ("torpedo_lock_lost", ServerMsg::TorpedoLockLost { torpedo_id: 12, reason: 1 }),
+        ];
+
+        let mut linhas: Vec<String> = Vec::new();
+        for (nome, msg) in &casos {
+            let bytes = bincode::serialize(msg).unwrap();
+            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            linhas.push(format!("  \"{nome}\": \"{hex}\""));
+        }
+        let json = format!("{{
+{}
+}}
+", linhas.join(",
+"));
+
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/client/src/net/__fixtures__");
+        std::fs::create_dir_all(dir).unwrap();
+        let mut f = std::fs::File::create(format!("{dir}/server_msgs.json")).unwrap();
         f.write_all(json.as_bytes()).unwrap();
     }
 

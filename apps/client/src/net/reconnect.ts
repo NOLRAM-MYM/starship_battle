@@ -24,9 +24,27 @@ export interface ReconnectHandle {
   attempt: number;
 }
 
-const DEFAULT_MAX_RETRIES = 8;
+export const DEFAULT_MAX_RETRIES = 8;
 const MAX_DELAY_MS = 30_000;
 const BASE_DELAY_MS = 1_000;
+
+/**
+ * Espera antes da tentativa `currentAttempt`, com recuo e jitter.
+ *
+ * Exportada porque o `client.ts` precisa da MESMA fórmula. Ele tinha a
+ * sua própria: um intervalo fixo de 1,5s, para sempre. Com o servidor
+ * fora do ar isso vira um cliente martelando a porta quarenta vezes por
+ * minuto — e como o `Join` é rejeitado na hora quando o protocolo não
+ * bate, um cliente desatualizado ficava nesse laço indefinidamente,
+ * cuspindo um aviso na tela a cada volta.
+ *
+ * O jitter existe para que muitos clientes derrubados juntos não voltem
+ * todos no mesmo instante.
+ */
+export function nextDelayMs(currentAttempt: number): number {
+  const exp = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** currentAttempt);
+  return exp * (0.5 + Math.random() * 0.5);
+}
 
 export function createReconnect(opts: ReconnectOpts): ReconnectHandle {
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
@@ -42,10 +60,6 @@ export function createReconnect(opts: ReconnectOpts): ReconnectHandle {
     }
   }
 
-  function nextDelayMs(currentAttempt: number): number {
-    const exp = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** currentAttempt);
-    return exp * (0.5 + Math.random() * 0.5);
-  }
 
   async function tryConnect(): Promise<void> {
     try {

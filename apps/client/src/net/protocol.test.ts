@@ -491,11 +491,118 @@ describe('paridade de bytes do Input com o servidor', () => {
     }
   });
 
+  it('o Join também bate byte a byte', () => {
+    // O Join é a outra mensagem que o cliente monta à mão, e corria o
+    // mesmo risco do Input: seis campos em sequência, e uma troca de
+    // ordem só apareceria como um jogador que não consegue entrar.
+    const esperado: Record<string, string> = JSON.parse(readFileSync(FIXTURE, 'utf8'));
+    const joins: Record<string, ClientMsg> = {
+      join_minimo: {
+        type: 'Join',
+        payload: {
+          name: 'piloto',
+          protocol: PROTOCOL_VERSION,
+          loadout: [],
+          skills: [],
+          consumables: [],
+          practice: false,
+        },
+      },
+      join_completo: {
+        type: 'Join',
+        payload: {
+          name: 'piloto',
+          protocol: PROTOCOL_VERSION,
+          loadout: ['railgun_s', 'engine_mk3'],
+          skills: ['dash_1'],
+          consumables: [{ templateId: 'shield_cell', charges: 3 }],
+          practice: true,
+        },
+      },
+    };
+    for (const [nome, msg] of Object.entries(joins)) {
+      expect(hex(encodeClientMsg(msg)), `caso "${nome}"`).toBe(esperado[nome]);
+    }
+  });
+
   it('a fixture cobre a mira fina segurada', () => {
     // A combinação que o defeito matava não pode sumir da lista: sem
     // ela, a troca de ordem volta a passar despercebida.
     const esperado = JSON.parse(readFileSync(FIXTURE, 'utf8'));
     expect(Object.keys(esperado)).toContain('mira_fina');
     expect(esperado['mira_fina']).not.toBe(esperado['neutro']);
+  });
+});
+
+describe('mensagens do servidor, byte a byte', () => {
+  // A fixture do snapshot amarrava só o `Snapshot`. As outras variantes
+  // chegavam ao cliente sem nenhuma conferência — a mesma lacuna que
+  // deixou passar a troca de ordem no `Input`. Uma variante inserida no
+  // meio do enum desloca todas as seguintes, e o sintoma seria o cliente
+  // desenhando um efeito no lugar de outro, ou lendo um campo com o
+  // tamanho errado.
+  //
+  // Gerada por `cargo test -p game-server escreve_mensagens_do_servidor`.
+  const FIXTURE = join(process.cwd(), 'src/net/__fixtures__/server_msgs.json');
+
+  const bytes = (hex: string): ArrayBuffer => {
+    const out = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    return out.buffer;
+  };
+
+  const fixture = (): Record<string, string> => JSON.parse(readFileSync(FIXTURE, 'utf8'));
+
+  it('a fixture existe (gerada pelo servidor)', () => {
+    expect(
+      existsSync(FIXTURE),
+      'gere com `cargo test -p game-server escreve_mensagens_do_servidor`',
+    ).toBe(true);
+  });
+
+  it('toda mensagem da fixture decodifica sem lançar', () => {
+    for (const [nome, hex] of Object.entries(fixture())) {
+      expect(() => decodeServerMsg(bytes(hex)), `caso "${nome}"`).not.toThrow();
+    }
+  });
+
+  it('cada campo chega com o valor certo', () => {
+    // Decodificar sem lançar não basta: um deslocamento de variante pode
+    // produzir uma mensagem plausível com os números trocados.
+    const f = fixture();
+    const esperado: Record<string, Record<string, unknown>> = {
+      // O cliente mistura snake_case e camelCase nos payloads; o que
+      // importa aqui é o VALOR chegar certo, então cada caso usa o nome
+      // que o decodificador de fato produz.
+      welcome: { type: 'Welcome', player_id: 7, world_seed: 0xc0ffee00 },
+      entity_destroyed: { type: 'EntityDestroyed', entity_id: 99 },
+      xp_gained: { type: 'XpGained', amount: 250, reason: 'kill' },
+      skill_activated: { type: 'SkillActivated', entity_id: 3, skill: 'Emp' },
+      vfx: { type: 'Vfx', effect_id: 2 },
+      pong: { type: 'Pong', nonce: 0xdeadbeef },
+      erro: { type: 'Error', reason: 'motivo' },
+      consumable_used: { type: 'ConsumableUsed', entityId: 5, slot: 1, vfx: 3, chargesLeft: 2 },
+      torpedo_lock_lost: { type: 'TorpedoLockLost', torpedoId: 12, reason: 1 },
+    };
+
+    for (const [nome, campos] of Object.entries(esperado)) {
+      const msg = decodeServerMsg(bytes(f[nome]!)) as Record<string, unknown>;
+      const payload = (msg.payload ?? {}) as Record<string, unknown>;
+      for (const [campo, valor] of Object.entries(campos)) {
+        const obtido = campo === 'type' ? msg.type : payload[campo];
+        expect(obtido, `${nome}.${campo}`).toBe(valor);
+      }
+    }
+  });
+
+  it('a posição do Vfx sobrevive à travessia', () => {
+    // Três f32 logo depois de um u8: é onde um alinhamento errado
+    // apareceria primeiro.
+    const msg = decodeServerMsg(bytes(fixture()['vfx']!)) as {
+      payload: { pos: number[] };
+    };
+    expect(msg.payload.pos[0]).toBeCloseTo(1.0, 5);
+    expect(msg.payload.pos[1]).toBeCloseTo(-2.0, 5);
+    expect(msg.payload.pos[2]).toBeCloseTo(3.5, 5);
   });
 });

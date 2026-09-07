@@ -497,7 +497,18 @@ async function bootstrap(): Promise<void> {
       skills: skillsDaConta,
       practice,
       consumables: cintoEquipado.map((c) => ({ templateId: c.templateId, charges: c.charges })),
-      onStatus: (s) => console.info(`[net] status=${s}`),
+      // O estado da conexão precisa CHEGAR ao jogador. Ele só ia para
+      // o console: quando a conexão caía, a tela simplesmente congelava
+      // — sem erro, sem aviso, sem nada que dissesse para esperar ou
+      // recarregar. É o "o servidor caiu" visto de fora.
+      onStatus: (s) => {
+        console.info(`[net] status=${s}`);
+        if (s === 'closed') {
+          hud.toast('Conexão perdida — tentando reconectar…', 'bad');
+        } else if (s === 'giveup') {
+          hud.toast('Sem conexão com a arena. Recarregue a página.', 'bad');
+        }
+      },
     });
 
     // Alvo travado pelo jogador (Tab). Declarado antes do handler de rede

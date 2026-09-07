@@ -9,6 +9,7 @@ import {
   decodeServerMsg,
 } from './protocol';
 import type { ClientMsg, ConsumableSlot, ServerMsg } from './protocol';
+import { DEFAULT_MAX_RETRIES, nextDelayMs } from './reconnect';
 
 export interface NetClient {
   /** Envia uma mensagem. Se o socket não estiver aberto, descarta. */
@@ -47,14 +48,18 @@ export interface NetClientOptions {
   /** Entrar no campo de provas, com alvos de treino. */
   practice?: boolean;
   reconnectDelayMs?: number;
-  onStatus?: (status: 'connecting' | 'open' | 'closed') => void;
+  /** Tentativas de reconexão antes de desistir. */
+  maxRetries?: number;
+  onStatus?: (status: 'connecting' | 'open' | 'closed' | 'giveup') => void;
 }
 
 export function connect(opts: NetClientOptions): NetClient {
   const handlers: ((msg: ServerMsg) => void)[] = [];
-  const reconnectDelay = opts.reconnectDelayMs ?? 1500;
+  const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   let ws: WebSocket | null = null;
   let intentionallyClosed = false;
+  /** Reconexões seguidas sem nenhuma conexão bem-sucedida no meio. */
+  let tentativas = 0;
 
   function open(): void {
     opts.onStatus?.('connecting');
@@ -63,6 +68,9 @@ export function connect(opts: NetClientOptions): NetClient {
 
     ws.addEventListener('open', () => {
       console.info('[net] open', opts.url);
+      // Conectou: o recuo volta ao início. Sem zerar aqui, uma queda
+      // isolada depois de horas jogando já entraria esperando 30s.
+      tentativas = 0;
       opts.onStatus?.('open');
       // Envia Join imediatamente após conectar.
       const join: ClientMsg = {
@@ -100,9 +108,21 @@ export function connect(opts: NetClientOptions): NetClient {
     ws.addEventListener('close', () => {
       console.info('[net] closed');
       opts.onStatus?.('closed');
-      if (!intentionallyClosed) {
-        setTimeout(open, reconnectDelay);
+      if (intentionallyClosed) return;
+
+      // Desistir faz parte. Antes o cliente tentava de novo a cada 1,5s
+      // para sempre: com o servidor fora do ar isso é bater na porta
+      // quarenta vezes por minuto, e com um cliente de protocolo
+      // desatualizado — que é rejeitado na hora — o laço era infinito,
+      // com um aviso na tela a cada volta e nenhuma saída.
+      if (tentativas >= maxRetries) {
+        console.warn('[net] desistindo da reconexão após', tentativas, 'tentativas');
+        opts.onStatus?.('giveup');
+        return;
       }
+      const espera = opts.reconnectDelayMs ?? nextDelayMs(tentativas);
+      tentativas += 1;
+      setTimeout(open, espera);
     });
 
     ws.addEventListener('error', (ev: Event) => {
