@@ -22,7 +22,7 @@ describe('protocol roundtrip', () => {
   it('encode Join then decode bytes matches expected layout', () => {
     const msg: ClientMsg = {
       type: 'Join',
-      payload: { name: 'alice', protocol: PROTOCOL_VERSION, loadout: [], skills: [], consumables: [], practice: false },
+      payload: { name: 'alice', protocol: PROTOCOL_VERSION, loadout: [], skills: [], consumables: [], practice: false, pilotClass: '' },
     };
     const bytes = encodeClientMsg(msg);
     // Esperado:
@@ -34,7 +34,8 @@ describe('protocol roundtrip', () => {
     // v8: + u64 com o comprimento do Vec<String> das skills.
     // v9: + u64 com o comprimento do Vec<ConsumableSlot>.
     // v11: + u8 do campo de provas.
-    expect(bytes.byteLength).toBe(4 + 8 + 5 + 2 + 8 + 8 + 8 + 1);
+    // v15: + u64 com o comprimento da classe de piloto (vazia aqui).
+    expect(bytes.byteLength).toBe(4 + 8 + 5 + 2 + 8 + 8 + 8 + 1 + 8);
 
     // Confere os primeiros bytes (variant + len)
     const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -506,6 +507,7 @@ describe('paridade de bytes do Input com o servidor', () => {
           skills: [],
           consumables: [],
           practice: false,
+          pilotClass: '',
         },
       },
       join_completo: {
@@ -517,6 +519,7 @@ describe('paridade de bytes do Input com o servidor', () => {
           skills: ['dash_1'],
           consumables: [{ templateId: 'shield_cell', charges: 3 }],
           practice: true,
+          pilotClass: 'ghost',
         },
       },
     };

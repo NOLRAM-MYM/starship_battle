@@ -1,7 +1,7 @@
-version: '3.8'
 services:
   postgres:
     image: postgres:15-alpine
+    container_name: batle-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: batlepass
@@ -10,19 +10,74 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d batle"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
+    container_name: batle-redis
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   nats:
     image: nats:2.9-alpine
+    container_name: batle-nats
     ports:
       - "4222:4222"
       - "8222:8222"
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    container_name: batle-api
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://postgres:batlepass@postgres:5432/batle
+      REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats:4222
+      # Sem valor embutido: este arquivo é versionado, e um segredo
+      # escrito aqui deixa qualquer leitor do repositório assinar um
+      # token para qualquer conta. Vem do `.env` ao lado (ignorado
+      # pelo git); sem ele, o compose recusa a subir.
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no arquivo .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  game-server:
+    build:
+      context: ..
+      dockerfile: crates/game-server/Dockerfile
+    container_name: batle-game-server
+    ports:
+      - "7777:7777"
+    environment:
+      BIND_ADDR: 0.0.0.0:7777
+
+  client:
+    build:
+      context: ..
+      dockerfile: apps/client/Dockerfile
+    container_name: batle-client
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+      - game-server
 
 volumes:
   postgres_data:

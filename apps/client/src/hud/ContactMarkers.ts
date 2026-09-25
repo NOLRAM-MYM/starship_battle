@@ -58,6 +58,7 @@ const CORES: Record<ContactMarker['faction'], string> = {
  * aparente da nave já comunica distância; o marcador comunica presença.
  */
 const RAIO = 13;
+const FONTE = '10px "JetBrains Mono", ui-monospace, monospace';
 /** Margem da borda para os indicadores de fora da tela. */
 const MARGEM = 34;
 
@@ -119,8 +120,6 @@ export function createContactMarkers(): ContactMarkersHandle {
         : `${Math.round(c.distance)} u`;
     const texto = c.label ? `${c.label}  ${d}` : d;
     ctx.fillStyle = cor;
-    ctx.font = '10px "JetBrains Mono", ui-monospace, monospace';
-    ctx.textAlign = 'center';
     ctx.fillText(texto, c.x, c.y + RAIO + 14);
   }
 
@@ -142,6 +141,12 @@ export function createContactMarkers(): ContactMarkersHandle {
     draw(markers): void {
       if (!ctx) return;
       ctx.clearRect(0, 0, larg, alt);
+      // Fonte e alinhamento uma vez por quadro, não por rótulo: atribuir
+      // `ctx.font` faz o navegador reinterpretar a declaração inteira, e
+      // isso aparecia no perfil de combate. Não dá para fixar só uma vez
+      // na criação — redimensionar o canvas zera o estado do contexto.
+      ctx.font = FONTE;
+      ctx.textAlign = 'center';
       for (const c of markers) {
         const cor = CORES[c.faction];
         if (c.offscreen) {

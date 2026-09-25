@@ -267,6 +267,49 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+// ------------------------------------------------------------------
+// Escrita só quando muda.
+//
+// O `refresh` roda a cada quadro, e reescrevia dezenas de textos,
+// estilos e classes com o MESMO valor. Trocar `textContent` substitui o
+// nó de texto e invalida o layout daquele trecho mesmo sem mudança; com
+// isso o HUD consumia ~17% da CPU no combate — quase tanto quanto a
+// renderização 3D inteira. Estas funções só tocam no DOM quando o valor
+// de fato muda.
+// ------------------------------------------------------------------
+
+function setText(node: HTMLElement, v: string): void {
+  if (node.textContent !== v) node.textContent = v;
+}
+
+function setClass(node: HTMLElement, v: string): void {
+  if (node.className !== v) node.className = v;
+}
+
+function toggleClass(node: HTMLElement, cls: string, on: boolean): void {
+  if (node.classList.contains(cls) !== on) node.classList.toggle(cls, on);
+}
+
+/**
+ * Último valor escrito por propriedade de estilo.
+ *
+ * Não dá para comparar com `node.style` porque o navegador normaliza o
+ * que lê de volta (uma cor escrita em hexadecimal volta como `rgb(...)`),
+ * e a comparação daria sempre "mudou".
+ */
+const estilosEscritos = new WeakMap<HTMLElement, Map<string, string>>();
+
+function setStyle(node: HTMLElement, prop: string, v: string): void {
+  let m = estilosEscritos.get(node);
+  if (!m) {
+    m = new Map();
+    estilosEscritos.set(node, m);
+  }
+  if (m.get(prop) === v) return;
+  m.set(prop, v);
+  node.style.setProperty(prop, v);
+}
+
 interface BarRefs {
   fill: HTMLElement;
   ghost: HTMLElement;
@@ -340,7 +383,20 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
   }
   const skillRefs: SkillRefs[] = [];
   let ultimaLargura = -1;
+  let gravityHtml = '';
   let ultimaAltura = -1;
+  // Dimensões da tela, medidas FORA do `refresh`.
+  //
+  // Ler `clientWidth` logo depois de escrever estilos obriga o navegador
+  // a recalcular o layout na hora — e isso acontecia em todo quadro.
+  // O observador mede só quando o tamanho muda de verdade.
+  let larguraTela = 0;
+  let alturaTela = 0;
+  let observador: ResizeObserver | null = null;
+  const medir = (): void => {
+    larguraTela = root.clientWidth;
+    alturaTela = root.clientHeight;
+  };
 
   state.skills.forEach((skill, idx) => {
     const box = el('div', 'hud-skill');
@@ -447,6 +503,13 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
     torpedoWarn, vignette, toasts,
   );
   container.appendChild(root);
+  medir();
+  if (typeof ResizeObserver !== 'undefined') {
+    observador = new ResizeObserver(medir);
+    observador.observe(root);
+  } else {
+    window.addEventListener('resize', medir);
+  }
 
   // Alvos "fantasma" das barras, atualizados com atraso.
   let ghostHp = 100;
@@ -458,33 +521,33 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
     const shieldPct = state.shieldMax > 0 ? clampPct((state.shield / state.shieldMax) * 100) : 0;
     const xpPct = state.xpNext > 0 ? clampPct((state.xp / state.xpNext) * 100) : 0;
 
-    hp.refs.fill.style.width = `${hpPct}%`;
-    hp.refs.fill.style.background = hpColor(hpPct);
-    shield.refs.fill.style.width = `${shieldPct}%`;
-    xp.refs.fill.style.width = `${xpPct}%`;
+    setStyle(hp.refs.fill, 'width', `${hpPct}%`);
+    setStyle(hp.refs.fill, 'background', hpColor(hpPct));
+    setStyle(shield.refs.fill, 'width', `${shieldPct}%`);
+    setStyle(xp.refs.fill, 'width', `${xpPct}%`);
 
     // O rastro só desce (dano); ao curar acompanha imediatamente.
     ghostHp = hpPct > ghostHp ? hpPct : Math.max(hpPct, ghostHp - 0.6);
     ghostShield = shieldPct > ghostShield ? shieldPct : Math.max(shieldPct, ghostShield - 1.2);
-    hp.refs.ghost.style.width = `${ghostHp}%`;
-    shield.refs.ghost.style.width = `${ghostShield}%`;
+    setStyle(hp.refs.ghost, 'width', `${ghostHp}%`);
+    setStyle(shield.refs.ghost, 'width', `${ghostShield}%`);
 
     const { level } = computeLevel(state.xp);
-    levelEl.textContent = `LV ${level}`;
-    nameEl.textContent = state.callsign;
-    hp.refs.value.textContent = `${Math.max(0, Math.floor(state.hp))} / ${state.hpMax}`;
-    shield.refs.value.textContent = `${Math.max(0, Math.floor(state.shield))} / ${state.shieldMax}`;
-    xp.refs.value.textContent = `${state.xp} / ${state.xpNext}`;
-    creditVal.textContent = formatNumber(state.money);
+    setText(levelEl, `LV ${level}`);
+    setText(nameEl, state.callsign);
+    setText(hp.refs.value, `${Math.max(0, Math.floor(state.hp))} / ${state.hpMax}`);
+    setText(shield.refs.value, `${Math.max(0, Math.floor(state.shield))} / ${state.shieldMax}`);
+    setText(xp.refs.value, `${state.xp} / ${state.xpNext}`);
+    setText(creditVal, formatNumber(state.money));
 
     // ---- Alvo ----
     if (state.targetName) {
-      target.classList.add('active');
-      targetName.textContent = state.targetName;
-      targetMeta.textContent = `${Math.round(state.targetDistance)} u - ${Math.round(state.targetHp * 100)}%`;
-      targetFill.style.width = `${clampPct(state.targetHp * 100)}%`;
+      toggleClass(target, 'active', true);
+      setText(targetName, state.targetName);
+      setText(targetMeta, `${Math.round(state.targetDistance)} u - ${Math.round(state.targetHp * 100)}%`);
+      setStyle(targetFill, 'width', `${clampPct(state.targetHp * 100)}%`);
     } else {
-      target.classList.remove('active');
+      toggleClass(target, 'active', false);
     }
 
     radar.draw(state.position, state.heading, state.contacts, state.targetId);
@@ -494,22 +557,21 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
 
     // ---- Mira ----
     if (state.aim) {
-      aimMarker.classList.add('active');
-      aimMarker.className =
+      setClass(
+        aimMarker,
         `hud-aim active ${state.aim.band}` +
-        `${state.aim.offscreen ? ' offscreen' : ''}` +
-        `${state.aim.onTarget ? ' on-target' : ''}`;
-      aimMarker.style.transform = `translate(${state.aim.x.toFixed(1)}px, ${state.aim.y.toFixed(1)}px)`;
-      aimMarker.style.borderColor = state.aim.color;
-      aimLabel.textContent = state.aim.onTarget ? 'ATIRE' : state.aim.label;
-      aimLabel.style.color = state.aim.color;
+          `${state.aim.offscreen ? ' offscreen' : ''}` +
+          `${state.aim.onTarget ? ' on-target' : ''}`,
+      );
+      setStyle(aimMarker, 'transform', `translate(${state.aim.x.toFixed(1)}px, ${state.aim.y.toFixed(1)}px)`);
+      setStyle(aimMarker, 'border-color', state.aim.color);
+      setText(aimLabel, state.aim.onTarget ? 'ATIRE' : state.aim.label);
+      setStyle(aimLabel, 'color', state.aim.color);
     } else {
-      aimMarker.className = 'hud-aim';
+      setClass(aimMarker, 'hud-aim');
     }
 
     // ---- Marcadores de contato ----
-    const larguraTela = root.clientWidth;
-    const alturaTela = root.clientHeight;
     if (larguraTela !== ultimaLargura || alturaTela !== ultimaAltura) {
       ultimaLargura = larguraTela;
       ultimaAltura = alturaTela;
@@ -519,41 +581,43 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
 
     // ---- Retículo (linha de tiro) ----
     if (state.gun) {
-      reticle.classList.add('live');
-      reticle.style.transform = `translate(${state.gun.x.toFixed(1)}px, ${state.gun.y.toFixed(1)}px)`;
+      toggleClass(reticle, 'live', true);
+      setStyle(reticle, 'transform', `translate(${state.gun.x.toFixed(1)}px, ${state.gun.y.toFixed(1)}px)`);
     } else {
-      reticle.classList.remove('live');
+      toggleClass(reticle, 'live', false);
     }
-    reticle.classList.toggle('on-target', state.aim?.onTarget === true);
+    toggleClass(reticle, 'on-target', state.aim?.onTarget === true);
 
     // ---- Alerta de torpedo ----
     const n = state.incomingTorpedoes;
-    torpedoWarn.classList.toggle('active', n > 0);
-    torpedoWarn.textContent =
-      n > 1 ? `${n} TORPEDOS EM PERSEGUIÇÃO` : n === 1 ? 'TORPEDO EM PERSEGUIÇÃO' : '';
+    toggleClass(torpedoWarn, 'active', n > 0);
+    setText(
+      torpedoWarn,
+      n > 1 ? `${n} TORPEDOS EM PERSEGUIÇÃO` : n === 1 ? 'TORPEDO EM PERSEGUIÇÃO' : '',
+    );
 
     // ---- Consumíveis ----
     state.consumables.forEach((c, idx) => {
       const ref = consumableRefs[idx];
       if (!ref) return;
-      ref.count.textContent = String(c.charges);
+      setText(ref.count, String(c.charges));
       // Sem carga: apagado, mas ainda visível. Some-lo faria os slots
       // dançarem no meio do combate.
-      ref.box.classList.toggle('empty', c.charges <= 0);
+      toggleClass(ref.box, 'empty', c.charges <= 0);
     });
 
     // ---- Carga do tiro ----
     const carga = Math.max(0, Math.min(1, state.fireCharge));
-    chargeWrap.classList.toggle('active', carga > 0.02);
-    chargeWrap.classList.toggle('full', carga >= 0.999);
-    chargeFill.style.width = `${(carga * 100).toFixed(1)}%`;
+    toggleClass(chargeWrap, 'active', carga > 0.02);
+    toggleClass(chargeWrap, 'full', carga >= 0.999);
+    setStyle(chargeFill, 'width', `${(carga * 100).toFixed(1)}%`);
     // Nome da arma + ganho atual. O multiplicador é o que transforma a
     // barra de enfeite em decisão: dá para ver quando soltar.
     const mult = state.chargeMult;
-    chargeLabel.textContent =
-      mult > 1.01
-        ? `${state.weaponName ?? 'Arma'} ×${mult.toFixed(1)}`
-        : (state.weaponName ?? '');
+    setText(
+      chargeLabel,
+      mult > 1.01 ? `${state.weaponName ?? 'Arma'} ×${mult.toFixed(1)}` : (state.weaponName ?? ''),
+    );
 
     // ---- Poço gravitacional ----
     const gw = state.gravityWell;
@@ -562,14 +626,23 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
       // saber se dá tempo de escapar.
       const altitude = Math.max(0, gw.distance - gw.surface);
       const perigo = altitude < gw.surface * 1.5;
-      gravity.className = `hud-gravity active${perigo ? ' critical' : ''}`;
-      gravity.innerHTML =
+      setClass(gravity, `hud-gravity active${perigo ? ' critical' : ''}`);
+      // HTML refeito só quando o conteúdo muda: reinterpretar HTML a
+      // cada quadro, parado dentro de um poço, era desperdício puro.
+      const html =
         `<b>CAMPO GRAVITACIONAL</b>` +
         `<span>${escapeHtml(gw.name)}</span>` +
         `<u>altitude ${Math.round(altitude)} u</u>`;
+      if (html !== gravityHtml) {
+        gravityHtml = html;
+        gravity.innerHTML = html;
+      }
     } else {
-      gravity.className = 'hud-gravity';
-      gravity.textContent = '';
+      setClass(gravity, 'hud-gravity');
+      if (gravityHtml !== '') {
+        gravityHtml = '';
+        gravity.textContent = '';
+      }
     }
 
     // ---- Cooldowns ----
@@ -580,14 +653,14 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
       const remaining = skill.cooldownEnd - now;
       if (remaining > 0) {
         const pct = clampPct((remaining / skill.cooldownTotal) * 100);
-        ref.cd.style.height = `${pct}%`;
-        ref.timer.textContent = `${(remaining / 1000).toFixed(1)}s`;
-        ref.box.classList.remove('ready');
+        setStyle(ref.cd, 'height', `${pct}%`);
+        setText(ref.timer, `${(remaining / 1000).toFixed(1)}s`);
+        toggleClass(ref.box, 'ready', false);
         ref.wasReady = false;
       } else {
-        ref.cd.style.height = '0%';
-        ref.timer.textContent = '';
-        ref.box.classList.add('ready');
+        setStyle(ref.cd, 'height', '0%');
+        setText(ref.timer, '');
+        toggleClass(ref.box, 'ready', true);
         // Pulso único na transição recarregando -> pronto.
         if (!ref.wasReady) {
           ref.box.classList.add('just-ready');
@@ -616,6 +689,8 @@ export function mountHud(opts: MountHudOpts): MountHudHandle {
   }
 
   function destroy(): void {
+    if (observador) observador.disconnect();
+    else window.removeEventListener('resize', medir);
     contatos.dispose();
     if (vignetteTimer) clearTimeout(vignetteTimer);
     radar.destroy();

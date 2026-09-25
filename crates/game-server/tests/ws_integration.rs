@@ -48,6 +48,7 @@ async fn client_connects_and_receives_welcome() {
             skills: vec![],
             consumables: vec![],
             practice: false,
+            pilot_class: String::new(),
         };
     let bytes = bincode::serialize(&join).unwrap();
     write.send(Message::Binary(bytes)).await.unwrap();

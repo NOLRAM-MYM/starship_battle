@@ -9,7 +9,7 @@
  *   - bool: u8 (0/1)
  */
 
-export const PROTOCOL_VERSION = 14 as const;
+export const PROTOCOL_VERSION = 15 as const;
 /**
  * Precisa bater com `SNAPSHOT_RATE_HZ` do servidor — é o intervalo que a
  * interpolação usa como alvo. O servidor tica a 30Hz e envia snapshot a
@@ -42,6 +42,13 @@ export interface JoinMsg {
    * coordenados, e mesmo assim o encontro era aleatório.
    */
   practice: boolean;
+  /**
+   * Classe de piloto escolhida no hangar (v15).
+   *
+   * Antes a classe só existia aqui: mudava as barras do estaleiro e nada
+   * em combate. Id desconhecido é tratado como neutro pelo servidor.
+   */
+  pilotClass: string;
 }
 export interface InputMsg {
   /** -1..1 — guinada (yaw). */
@@ -663,6 +670,8 @@ export function encodeClientMsg(msg: ClientMsg): Uint8Array {
       }
       // v11: campo de provas.
       w.writeBool(msg.payload.practice);
+      // v15: por último, na mesma ordem da declaração em Rust.
+      w.writeString(msg.payload.pilotClass);
       break;
     }
     case 'Input':

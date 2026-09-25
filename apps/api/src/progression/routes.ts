@@ -14,6 +14,7 @@ import { verifyToken } from '../auth/tokens.js';
 import {
   addXpService,
   getProgressionService,
+  MAX_XP_POR_PEDIDO,
   ProgressionError,
   spendSkillService,
 } from './service.js';
@@ -39,11 +40,14 @@ function progressionErrorToHttp(err: ProgressionError): { status: number; code: 
     case 'db_unavailable': return { status: 503, code: 'db_unavailable' };
     case 'invalid_input': return { status: 400, code: 'invalid_input' };
     case 'not_enough_points': return { status: 409, code: 'not_enough_points' };
+    case 'rate_limited': return { status: 429, code: 'rate_limited' };
   }
 }
 
 const xpSchema = z.object({
-  amount: z.number().int().positive(),
+  // Teto explícito: sem ele, a rota gravava qualquer valor — ver
+  // `MAX_XP_POR_PEDIDO`.
+  amount: z.number().int().positive().max(MAX_XP_POR_PEDIDO),
   source: z.string().max(40).optional(),
 });
 

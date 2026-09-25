@@ -20,7 +20,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// v6: `Input` ganhou `fire_charge` (tiro carregado) e o mundo ganhou
 /// vórtices de dobra como tipo de entidade.
-pub const PROTOCOL_VERSION: u16 = 14;
+///
+/// v15: `Join` ganhou `pilot_class` — a classe de piloto passou a valer em
+/// combate, e não só nas barras do hangar.
+pub const PROTOCOL_VERSION: u16 = 15;
 
 /// Identificadores de efeito visual em `ServerMsg::Vfx`.
 ///
@@ -110,7 +113,12 @@ pub enum ClientMsg {
         /// humanos coordenados, e mesmo assim o encontro era aleatório.
         /// Sem um adversário confiável, mira, torpedo e defesas só
         /// podiam ser testados em teste unitário.
-        practice: bool
+        practice: bool,
+        /// Classe de piloto escolhida no hangar (`ace`, `ghost`, ...).
+        ///
+        /// v15. Antes a classe só existia no cliente: mudava as barras do
+        /// estaleiro e nada em combate. Id desconhecido é neutro.
+        pilot_class: String,
     },
     /// Input contínuo (enviado a ~30Hz).
     Input {
@@ -609,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_is_v14() {
+    fn protocol_version_is_v15() {
         // v2: payloads por tipo. v3: estáticos por AOI. v4: pitch/roll.
         // v5: loadout no Join + corpos celestes. v6: tiro carregado +
         // vórtices de dobra. v7: aparência do projétil (arma + carga).
@@ -618,7 +626,8 @@ mod tests {
         // v11: campo de provas. v12: time nas naves (amigo/inimigo).
         // v13: alvo do torpedo, para o alerta não contar os próprios.
         // v14: alvo de mira, para o rastreamento assistido.
-        assert_eq!(PROTOCOL_VERSION, 14);
+        // v15: classe de piloto no Join.
+        assert_eq!(PROTOCOL_VERSION, 15);
     }
 
     #[test]
@@ -849,6 +858,7 @@ mod weapon_fixture {
                     skills: vec![],
                     consumables: vec![],
                     practice: false,
+                    pilot_class: String::new(),
                 },
             ),
             (
@@ -863,6 +873,7 @@ mod weapon_fixture {
                         charges: 3,
                     }],
                     practice: true,
+                    pilot_class: "ghost".into(),
                 },
             ),
         ];
@@ -943,6 +954,87 @@ mod weapon_fixture {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/client/src/net/__fixtures__");
         std::fs::create_dir_all(dir).unwrap();
         let mut f = std::fs::File::create(format!("{dir}/server_msgs.json")).unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+    }
+
+    /// O que o SERVIDOR faz com cada módulo que o hangar deixa equipar.
+    ///
+    /// A auditoria de equipamentos achou cinco módulos vendidos na loja —
+    /// sensores, mantos e expansão de carga — que no servidor só somavam
+    /// massa, e outros cinco que pesavam no hangar e não pesavam em voo.
+    /// O hangar exibia números que o jogo não aplicava, e nada acusava.
+    ///
+    /// O teste do cliente compara esta tabela com a do hangar, atributo
+    /// por atributo, e exige que os dois conheçam exatamente os mesmos
+    /// módulos.
+    #[test]
+    fn escreve_equipamentos_para_o_cliente() {
+        use sim_core::ship::sensors::{sensor_range, stealth};
+        use sim_core::ship::torpedo::torpedo_profile;
+        use sim_core::ship::weapons::{component_mass, defense_profile, engine_thrust};
+
+        let ids = [
+            "cargo_hauler", "cargo_x2", "cloak_lvl1", "cloak_umbra", "engine_ion",
+            "engine_mk1", "engine_mk3", "engine_void", "lance_singular", "laser_burst",
+            "plasma_m", "railgun_s", "sensor_array", "sensor_deep", "shield_bio",
+            "shield_bulwark", "shield_phase", "torpedo_heavy", "torpedo_seeker",
+            "vortex_tap", "wake_stabilizer", "warp_coil",
+        ];
+        let num = |v: Option<f32>| v.map_or("null".to_string(), |x| format!("{x}"));
+
+        let mut linhas = Vec::new();
+        for id in ids {
+            let arma = weapon_profile(id);
+            let torp = torpedo_profile(id);
+            let def = defense_profile(id);
+            let (dano, cadencia) = match (arma, torp) {
+                (Some(w), _) => (Some(w.damage), Some(w.fire_rate)),
+                (None, Some(t)) => (
+                    Some(t.damage),
+                    Some(1.0 / crate::world::TORPEDO_COOLDOWN),
+                ),
+                _ => (None, None),
+            };
+            linhas.push(format!(
+                "  \"{id}\": {{ \"mass\": {}, \"sensorRange\": {}, \"stealth\": {}, \"shield\": {}, \"shieldRegen\": {}, \"hull\": {}, \"damage\": {}, \"fireRate\": {}, \"thrust\": {} }}",
+                component_mass(id),
+                sensor_range(id),
+                stealth(id),
+                num(def.map(|d| d.shield)),
+                num(def.map(|d| d.shield_regen)),
+                num(def.map(|d| d.hull)),
+                num(dano),
+                num(cadencia),
+                num(engine_thrust(id)),
+            ));
+        }
+        let json = format!("{{\n{}\n}}\n", linhas.join(",\n"));
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/client/src/net/__fixtures__");
+        std::fs::create_dir_all(dir).unwrap();
+        let mut f = std::fs::File::create(format!("{dir}/equipment.json")).unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+    }
+
+    /// Multiplicadores de cada classe de piloto, como o servidor aplica.
+    ///
+    /// As classes existiam só no hangar; esta tabela amarra os números
+    /// que o estaleiro exibe aos que o combate usa.
+    #[test]
+    fn escreve_classes_para_o_cliente() {
+        use sim_core::ship::pilot::{pilot_modifiers, CLASSES};
+        let mut linhas = Vec::new();
+        for c in CLASSES {
+            let m = pilot_modifiers(c);
+            linhas.push(format!(
+                "  \"{c}\": {{ \"thrust\": {}, \"damage\": {}, \"fireRate\": {}, \"shield\": {}, \"shieldRegen\": {}, \"hull\": {}, \"sensorRange\": {}, \"cargo\": {}, \"stealthBonus\": {} }}",
+                m.thrust, m.damage, m.fire_rate, m.shield, m.shield_regen, m.hull,
+                m.sensor_range, m.cargo, m.stealth_bonus
+            ));
+        }
+        let json = format!("{{\n{}\n}}\n", linhas.join(",\n"));
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/client/src/net/__fixtures__");
+        std::fs::create_dir_all(dir).unwrap();
+        let mut f = std::fs::File::create(format!("{dir}/pilots.json")).unwrap();
         f.write_all(json.as_bytes()).unwrap();
     }
 

@@ -139,12 +139,12 @@ export const COMPONENT_LIBRARY: UiComponentTemplate[] = [
   // ---------- Carga ----------
   {
     id: 'cargo_x2', name: 'Expansão de Carga +2', kind: 'Cargo', tier: 1, mass: 8, cost: 220,
-    blurb: 'Porão extra para minério e destroços.',
+    blurb: 'Porão extra para minério e destroços. Sem uso até a mineração existir.',
     stats: { cargo: 40 },
   },
   {
     id: 'cargo_hauler', name: 'Porão Industrial', kind: 'Cargo', tier: 3, mass: 30, cost: 1500,
-    blurb: 'Muito espaço, muita massa. Mineração dedicada.',
+    blurb: 'Muito espaço, muita massa. A mineração ainda não existe: por ora, só o casco extra conta.',
     stats: { cargo: 160, hull: 60 },
   },
 

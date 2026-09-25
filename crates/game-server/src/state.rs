@@ -63,6 +63,8 @@ pub enum PlayerCommand {
         consumables: Vec<sim_core::ship::consumables::ConsumableSlot>,
         /// Criar alvos de treino ao redor da nave.
         practice: bool,
+        /// Classe de piloto (multiplicadores sobre a nave).
+        pilot_class: String,
     },
     Input {
         player_id: u32,
@@ -97,12 +99,29 @@ pub enum PlayerCommand {
 /// pontos de remoção, e bastava um esquecer o aviso para o jogador ficar
 /// preso numa conexão que o servidor já tinha abandonado.
 fn descarta_cliente(clients: &mut HashMap<u32, ClientHandle>, id: u32, motivo: &str) {
+    descarta(clients, id, motivo, true);
+}
+
+/// Saída normal: fechou a aba, voltou ao hangar. Nada a alertar.
+///
+/// Separada porque todo encerramento passava por `descarta_cliente` e
+/// saía como `WARN` — o mesmo ruído que já tinha sido tirado do caminho
+/// de desconexão: um log que grita pelo normal esconde o anormal.
+fn encerra_cliente(clients: &mut HashMap<u32, ClientHandle>, id: u32) {
+    descarta(clients, id, "conexão encerrada", false);
+}
+
+fn descarta(clients: &mut HashMap<u32, ClientHandle>, id: u32, motivo: &str, anormal: bool) {
     if let Some(h) = clients.remove(&id) {
         // `notify_one` e não `notify_waiters`: guarda a permissão mesmo
         // se a conexão ainda não estiver esperando neste instante, e
         // assim o aviso não se perde por questão de tempo.
         h.desistir.notify_one();
-        warn!(player_id = id, motivo, "cliente descartado");
+        if anormal {
+            warn!(player_id = id, motivo, "cliente descartado");
+        } else {
+            debug!(player_id = id, motivo, "cliente encerrado");
+        }
     }
 }
 
@@ -226,7 +245,7 @@ impl ServerState {
 
     pub async fn unregister_client(&self, player_id: u32) {
         let mut clients = self.clients.write().await;
-        descarta_cliente(&mut clients, player_id, "conexão encerrada");
+        encerra_cliente(&mut clients, player_id);
         drop(clients);
         self.enqueue(PlayerCommand::Leave { player_id });
     }
@@ -363,7 +382,7 @@ pub async fn run_simulation_loop(state: ServerState) {
         }
 
         // --- 2. Um único write lock por tick: aplica, simula, coleta ---
-        let (destroyed, events, party_of) = {
+        let (destroyed, events, pending_xp, party_of) = {
             let mut world = state.world.write().await;
 
             for cmd in command_buf.drain(..) {
@@ -375,11 +394,12 @@ pub async fn run_simulation_loop(state: ServerState) {
                         skills,
                         consumables,
                         practice,
+                        pilot_class,
                     } => {
                         world.spawn_player_ship(player_id, name);
                         // O loadout é aplicado logo após o spawn: os
                         // números vêm do catálogo do servidor.
-                        world.apply_loadout_and_skills(player_id, &loadout, &skills);
+                        world.apply_build(player_id, &loadout, &skills, &pilot_class);
                         world.apply_consumables(player_id, &consumables);
                         if practice {
                             world.spawn_training_range(player_id);
@@ -432,7 +452,12 @@ pub async fn run_simulation_loop(state: ServerState) {
             // temos. Antes, o laço de destruídos abria um `world.read()`
             // por entidade morta.
             let party_of = world.parties.clone();
-            (world.take_destroyed(), world.take_events(), party_of)
+            (
+                world.take_destroyed(),
+                world.take_events(),
+                world.take_pending_xp(),
+                party_of,
+            )
         };
 
         // --- 3. Broadcast fora do lock ---
@@ -440,31 +465,20 @@ pub async fn run_simulation_loop(state: ServerState) {
             state.broadcast(event).await;
         }
 
-        for (entity_id, killer_opt) in destroyed {
+        for (entity_id, _killer_opt) in destroyed {
             state
                 .broadcast(ServerMsg::EntityDestroyed { entity_id })
                 .await;
+        }
 
-            let Some(killer_id) = killer_opt else { continue };
-
-            // XP compartilhado com a party (Task 6.2).
-            // TODO: valor por tipo de alvo, vindo do banco.
-            let xp_amount = 50;
-            let receivers: Vec<u32> = match party_of.get(&killer_id) {
-                Some(party_id) => party_of
-                    .iter()
-                    .filter(|(_, p)| *p == party_id)
-                    .map(|(pid, _)| *pid)
-                    .collect(),
-                None => vec![killer_id],
-            };
-            for p in receivers {
+        for pxp in pending_xp {
+            for p in receptores_do_xp(&pxp, &party_of) {
                 state
                     .send_to(
                         p,
                         ServerMsg::XpGained {
-                            amount: xp_amount,
-                            reason: "Enemy destroyed".to_string(),
+                            amount: pxp.amount,
+                            reason: pxp.reason.clone(),
                         },
                     )
                     .await;
@@ -564,6 +578,31 @@ async fn broadcast_snapshots(state: &ServerState) {
 
     for id in dead {
         descarta_cliente(&mut clients, id, "atrasado no broadcast de snapshot");
+    }
+}
+
+/// Quem recebe um ganho de XP.
+///
+/// Só o XP marcado como compartilhado (abates) vai ao grupo. Antes todo
+/// ganho ia, e com a sobrevivência, a fuga de poço e a perseguição
+/// entrando na conta, cada membro de um grupo de N passava a receber N
+/// vezes o próprio XP — gravado na conta de cada um.
+fn receptores_do_xp(
+    pxp: &crate::world::PendingXp,
+    party_of: &HashMap<u32, u32>,
+) -> Vec<u32> {
+    let grupo = if pxp.shared { party_of.get(&pxp.player_id) } else { None };
+    match grupo {
+        Some(party_id) => {
+            let mut membros: Vec<u32> = party_of
+                .iter()
+                .filter(|(_, p)| *p == party_id)
+                .map(|(pid, _)| *pid)
+                .collect();
+            membros.sort_unstable();
+            membros
+        }
+        None => vec![pxp.player_id],
     }
 }
 
@@ -695,6 +734,7 @@ mod tests {
             skills: vec![],
             consumables: vec![],
             practice: false,
+            pilot_class: String::new(),
         });
 
         // Simula um tick do loop: drena e aplica.
@@ -803,5 +843,42 @@ mod desistir_de_cliente {
         let (_rx, desistir) = state.register_client(3).await;
         state.unregister_client(3).await;
         assert!(avisado(&desistir).await);
+    }
+}
+
+#[cfg(test)]
+mod xp_do_grupo {
+    use super::receptores_do_xp;
+    use crate::world::PendingXp;
+    use std::collections::HashMap;
+
+    fn grupo_de_quatro() -> HashMap<u32, u32> {
+        [(1, 9), (2, 9), (3, 9), (4, 9), (5, 7)].into_iter().collect()
+    }
+
+    fn xp(jogador: u32, shared: bool) -> PendingXp {
+        PendingXp { player_id: jogador, amount: 20, reason: "x".into(), shared }
+    }
+
+    #[test]
+    fn abate_vai_para_o_grupo_inteiro() {
+        assert_eq!(receptores_do_xp(&xp(2, true), &grupo_de_quatro()), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn ganho_pessoal_fica_com_quem_ganhou() {
+        // Com todo ganho indo ao grupo, quatro membros sobrevivendo juntos
+        // davam a cada um quatro vezes o próprio XP.
+        assert_eq!(receptores_do_xp(&xp(2, false), &grupo_de_quatro()), vec![2]);
+    }
+
+    #[test]
+    fn sem_grupo_fica_com_quem_ganhou() {
+        assert_eq!(receptores_do_xp(&xp(8, true), &grupo_de_quatro()), vec![8]);
+    }
+
+    #[test]
+    fn grupo_vizinho_nao_recebe() {
+        assert!(!receptores_do_xp(&xp(1, true), &grupo_de_quatro()).contains(&5));
     }
 }

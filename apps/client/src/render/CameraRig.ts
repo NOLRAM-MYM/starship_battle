@@ -129,6 +129,15 @@ export class CameraRig {
     // Olha um pouco à frente do movimento, não para a nave em si.
     const speed = velocity.length();
     this.lookAt.copy(this.focus).addScaledVector(velocity, 0.22);
+
+    // Orienta o vetor 'up' da câmera suavemente com a rotação da nave:
+    // permite curvas e rolagens 6DOF sem travar no teto galáctico.
+    const targetUp = new THREE.Vector3(0, 1, 0).applyQuaternion(targetQuat);
+    this.camera.up.x = damp(this.camera.up.x, targetUp.x, this.stiffness * 0.75, dt);
+    this.camera.up.y = damp(this.camera.up.y, targetUp.y, this.stiffness * 0.75, dt);
+    this.camera.up.z = damp(this.camera.up.z, targetUp.z, this.stiffness * 0.75, dt);
+    this.camera.up.normalize();
+
     this.camera.lookAt(this.lookAt);
 
     // FOV dinâmico, também amortecido para não pulsar com jitter de rede,

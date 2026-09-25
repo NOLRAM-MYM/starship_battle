@@ -25,11 +25,12 @@
   left: 18px;
   width: 260px;
   padding: 12px 14px;
-  background: linear-gradient(135deg, rgba(9, 14, 26, 0.82), rgba(9, 14, 26, 0.42));
-  border: 1px solid var(--border);
-  border-left: 2px solid var(--accent);
+  background: linear-gradient(135deg, rgba(9, 14, 26, 0.88), rgba(9, 14, 26, 0.55));
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--accent);
   border-radius: var(--r-md);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 15px rgba(78, 201, 255, 0.12);
 }
 
 .hud-callsign {
@@ -38,7 +39,7 @@
   justify-content: space-between;
   margin-bottom: 10px;
 }
-.hud-name { font-weight: 700; font-size: 14px; letter-spacing: 0.05em; }
+.hud-name { font-weight: 700; font-size: 14px; letter-spacing: 0.05em; text-shadow: 0 0 8px rgba(230, 238, 255, 0.4); }
 .hud-level {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -46,6 +47,7 @@
   background: var(--accent-dim);
   padding: 1px 7px;
   border-radius: 999px;
+  box-shadow: 0 0 8px rgba(78, 201, 255, 0.25);
 }
 
 .hud-bar { margin-bottom: 8px; }
@@ -66,9 +68,9 @@
   position: relative;
   height: 7px;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.65);
   overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 .hud-fill {
   position: absolute;
@@ -86,9 +88,9 @@
   transition: width 620ms ease-out;
 }
 
-.hud-fill-hp { background: linear-gradient(90deg, #2fd07a, #45e5a4); }
-.hud-fill-shield { background: linear-gradient(90deg, #2f8fd0, #6fd6ff); }
-.hud-fill-xp { background: linear-gradient(90deg, #c99a2f, #ffd166); }
+.hud-fill-hp { background: linear-gradient(90deg, #2fd07a, #45e5a4); box-shadow: 0 0 10px rgba(69, 229, 164, 0.4); }
+.hud-fill-shield { background: linear-gradient(90deg, #2f8fd0, #6fd6ff); box-shadow: 0 0 10px rgba(111, 214, 255, 0.4); }
+.hud-fill-xp { background: linear-gradient(90deg, #c99a2f, #ffd166); box-shadow: 0 0 10px rgba(255, 209, 102, 0.4); }
 
 /* ---------- Alvo travado (topo centro) ---------- */
 .hud-target {
@@ -99,11 +101,12 @@
   min-width: 190px;
   padding: 8px 14px;
   text-align: center;
-  background: rgba(9, 14, 26, 0.72);
-  border: 1px solid var(--border);
-  border-top: 2px solid var(--danger);
+  background: rgba(9, 14, 26, 0.82);
+  border: 1px solid var(--border-strong);
+  border-top: 3px solid var(--danger);
   border-radius: var(--r-md);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 16px rgba(255, 95, 109, 0.2);
   opacity: 0;
   transition: opacity var(--med) var(--ease);
 }

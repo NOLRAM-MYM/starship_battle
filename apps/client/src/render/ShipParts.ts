@@ -37,6 +37,18 @@ export interface PartVisual {
   roughness?: number;
 }
 
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+
+function mergeCompound(geometries: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const nonIndexed = geometries.map((g) => {
+    const ni = g.index ? g.toNonIndexed() : g;
+    if (!ni.getAttribute('normal')) ni.computeVertexNormals();
+    return ni;
+  });
+  const merged = mergeGeometries(nonIndexed, false);
+  return merged ?? geometries[0] ?? new THREE.BufferGeometry();
+}
+
 /**
  * Catálogo visual. As chaves batem com `componentLibrary.ts` e com o
  * catálogo de armas do servidor — se um id sumir de um lado, a peça
@@ -44,20 +56,26 @@ export interface PartVisual {
  */
 const VISUALS: Record<string, PartVisual> = {
   // ---------------------------------------------------------- Armas
-  // Canhão cinético: cano longo e fino, com freio de boca.
+  // Canhão linear: trilhos magnéticos paralelos com receptor e freio de boca.
   railgun_s: {
     mount: 'weapon',
-    color: 0x8a929e,
+    color: 0x9aa0a6,
     metalness: 0.95,
-    roughness: 0.25,
+    roughness: 0.2,
     build: (s) => {
-      const cano = new THREE.CylinderGeometry(0.07 * s, 0.06 * s, 1.5 * s, 8);
-      cano.rotateX(Math.PI / 2);
-      return cano;
+      const breech = new THREE.BoxGeometry(0.16 * s, 0.16 * s, 0.45 * s);
+      breech.translate(0, 0, 0.35 * s);
+      const railUpper = new THREE.BoxGeometry(0.04 * s, 0.03 * s, 1.25 * s);
+      railUpper.translate(0, 0.05 * s, -0.25 * s);
+      const railLower = new THREE.BoxGeometry(0.04 * s, 0.03 * s, 1.25 * s);
+      railLower.translate(0, -0.05 * s, -0.25 * s);
+      const shroud = new THREE.BoxGeometry(0.12 * s, 0.12 * s, 0.3 * s);
+      shroud.translate(0, 0, 0.05 * s);
+      return mergeCompound([breech, railUpper, railLower, shroud]);
     },
   },
 
-  // Laser: emissor curto e prismático, quase todo brilho.
+  // Laser em rajada: conjunto rotativo de 3 canos emissores com dissipadores.
   laser_burst: {
     mount: 'weapon',
     color: 0x2a3f5c,
@@ -66,13 +84,23 @@ const VISUALS: Record<string, PartVisual> = {
     metalness: 0.3,
     roughness: 0.1,
     build: (s) => {
-      const emissor = new THREE.CylinderGeometry(0.13 * s, 0.05 * s, 0.75 * s, 6);
-      emissor.rotateX(Math.PI / 2);
-      return emissor;
+      const housing = new THREE.CylinderGeometry(0.12 * s, 0.14 * s, 0.35 * s, 6);
+      housing.rotateX(Math.PI / 2);
+      housing.translate(0, 0, 0.15 * s);
+      const barrel1 = new THREE.CylinderGeometry(0.03 * s, 0.03 * s, 0.65 * s, 6);
+      barrel1.rotateX(Math.PI / 2);
+      barrel1.translate(0, 0.06 * s, -0.15 * s);
+      const barrel2 = new THREE.CylinderGeometry(0.03 * s, 0.03 * s, 0.65 * s, 6);
+      barrel2.rotateX(Math.PI / 2);
+      barrel2.translate(-0.05 * s, -0.04 * s, -0.15 * s);
+      const barrel3 = new THREE.CylinderGeometry(0.03 * s, 0.03 * s, 0.65 * s, 6);
+      barrel3.rotateX(Math.PI / 2);
+      barrel3.translate(0.05 * s, -0.04 * s, -0.15 * s);
+      return mergeCompound([housing, barrel1, barrel2, barrel3]);
     },
   },
 
-  // Plasma: câmara bojuda com bocal largo — pesado e evidente.
+  // Plasma: câmara de contenção toroidal com bocal magnético dilatado.
   plasma_m: {
     mount: 'weapon',
     color: 0x3a2a52,
@@ -81,13 +109,18 @@ const VISUALS: Record<string, PartVisual> = {
     metalness: 0.6,
     roughness: 0.3,
     build: (s) => {
-      const camara = new THREE.CapsuleGeometry(0.2 * s, 0.7 * s, 6, 10);
+      const camara = new THREE.CapsuleGeometry(0.18 * s, 0.5 * s, 6, 8);
       camara.rotateX(Math.PI / 2);
-      return camara;
+      const ring = new THREE.TorusGeometry(0.24 * s, 0.04 * s, 6, 12);
+      ring.translate(0, 0, 0);
+      const muzzle = new THREE.CylinderGeometry(0.14 * s, 0.09 * s, 0.25 * s, 8);
+      muzzle.rotateX(Math.PI / 2);
+      muzzle.translate(0, 0, -0.4 * s);
+      return mergeCompound([camara, ring, muzzle]);
     },
   },
 
-  // Lança singular: cano enorme com acelerador anelado. Domina a asa.
+  // Lança singular: canhão espinhal pesado com colares aceleradores.
   lance_singular: {
     mount: 'weapon',
     color: 0x4a3410,
@@ -96,15 +129,20 @@ const VISUALS: Record<string, PartVisual> = {
     metalness: 0.9,
     roughness: 0.15,
     build: (s) => {
-      const cano = new THREE.CylinderGeometry(0.1 * s, 0.22 * s, 2.6 * s, 10);
-      cano.rotateX(Math.PI / 2);
-      return cano;
+      const barrel = new THREE.CylinderGeometry(0.11 * s, 0.19 * s, 2.7 * s, 8);
+      barrel.rotateX(Math.PI / 2);
+      const breech = new THREE.BoxGeometry(0.38 * s, 0.34 * s, 0.7 * s);
+      breech.translate(0, 0, 0.85 * s);
+      const ring1 = new THREE.TorusGeometry(0.22 * s, 0.035 * s, 6, 12);
+      ring1.translate(0, 0, -0.6 * s);
+      const ring2 = new THREE.TorusGeometry(0.24 * s, 0.035 * s, 6, 12);
+      ring2.translate(0, 0, 0.1 * s);
+      return mergeCompound([barrel, breech, ring1, ring2]);
     },
   },
 
   // ------------------------------------------------------- Torpedos
-  // Tubos de lançamento sob a asa: silhueta grossa e curta, bem
-  // diferente do cano fino de um canhão.
+  // Tubos duplos de lançamento em casulo aerodinâmico.
   torpedo_seeker: {
     mount: 'weapon',
     color: 0x6b6f78,
@@ -113,11 +151,22 @@ const VISUALS: Record<string, PartVisual> = {
     metalness: 0.8,
     roughness: 0.4,
     build: (s) => {
-      const tubo = new THREE.CylinderGeometry(0.22 * s, 0.22 * s, 1.1 * s, 8);
-      tubo.rotateX(Math.PI / 2);
-      return tubo;
+      const pod = new THREE.BoxGeometry(0.38 * s, 0.22 * s, 1.05 * s);
+      const nose = new THREE.ConeGeometry(0.18 * s, 0.25 * s, 4);
+      nose.rotateX(-Math.PI / 2);
+      nose.rotateZ(Math.PI / 4);
+      nose.translate(0, 0, -0.65 * s);
+      const tubeL = new THREE.CylinderGeometry(0.06 * s, 0.06 * s, 0.2 * s, 6);
+      tubeL.rotateX(Math.PI / 2);
+      tubeL.translate(-0.1 * s, 0, -0.55 * s);
+      const tubeR = new THREE.CylinderGeometry(0.06 * s, 0.06 * s, 0.2 * s, 6);
+      tubeR.rotateX(Math.PI / 2);
+      tubeR.translate(0.1 * s, 0, -0.55 * s);
+      return mergeCompound([pod, nose, tubeL, tubeR]);
     },
   },
+
+  // Casulo quádruplo blindado de torpedos pesados.
   torpedo_heavy: {
     mount: 'weapon',
     color: 0x55585f,
@@ -126,9 +175,10 @@ const VISUALS: Record<string, PartVisual> = {
     metalness: 0.85,
     roughness: 0.35,
     build: (s) => {
-      const tubo = new THREE.CylinderGeometry(0.34 * s, 0.34 * s, 1.7 * s, 10);
-      tubo.rotateX(Math.PI / 2);
-      return tubo;
+      const pod = new THREE.BoxGeometry(0.48 * s, 0.38 * s, 1.55 * s);
+      const rack = new THREE.BoxGeometry(0.54 * s, 0.12 * s, 0.6 * s);
+      rack.translate(0, 0.15 * s, 0);
+      return mergeCompound([pod, rack]);
     },
   },
 
@@ -139,64 +189,90 @@ const VISUALS: Record<string, PartVisual> = {
     emissive: 0x4ec9ff,
     glow: 0.5,
     build: (s) => {
-      const g = new THREE.CylinderGeometry(0.2 * s, 0.24 * s, 0.7 * s, 8);
-      g.rotateX(Math.PI / 2);
-      return g;
+      const body = new THREE.CylinderGeometry(0.18 * s, 0.23 * s, 0.65 * s, 8);
+      body.rotateX(Math.PI / 2);
+      const nozzle = new THREE.CylinderGeometry(0.24 * s, 0.21 * s, 0.2 * s, 8);
+      nozzle.rotateX(Math.PI / 2);
+      nozzle.translate(0, 0, 0.4 * s);
+      return mergeCompound([body, nozzle]);
     },
   },
 
-  // MK-III: nacela maior com anel de resfriamento.
+  // MK-III: nacela de dois estágios com anel de resfriamento.
   engine_mk3: {
     mount: 'engine',
     color: 0x2b3444,
     emissive: 0x66d9ff,
     glow: 0.75,
     build: (s) => {
-      const g = new THREE.CylinderGeometry(0.3 * s, 0.36 * s, 1.0 * s, 10);
-      g.rotateX(Math.PI / 2);
-      return g;
+      const body = new THREE.CylinderGeometry(0.28 * s, 0.35 * s, 0.95 * s, 8);
+      body.rotateX(Math.PI / 2);
+      const ring = new THREE.TorusGeometry(0.36 * s, 0.04 * s, 6, 12);
+      ring.translate(0, 0, 0.1 * s);
+      return mergeCompound([body, ring]);
     },
   },
 
-  // Iônico: bocal cônico aberto, fino e alongado.
+  // Iônico: coluna aceleradora linear com cone magnético aberto.
   engine_ion: {
     mount: 'engine',
     color: 0x1e2c3a,
     emissive: 0x9d7bff,
     glow: 0.9,
     build: (s) => {
-      const g = new THREE.ConeGeometry(0.28 * s, 1.2 * s, 10, 1, true);
-      g.rotateX(Math.PI / 2);
-      return g;
+      const column = new THREE.CylinderGeometry(0.18 * s, 0.22 * s, 0.8 * s, 8);
+      column.rotateX(Math.PI / 2);
+      const cone = new THREE.ConeGeometry(0.28 * s, 0.45 * s, 8, 1, true);
+      cone.rotateX(Math.PI / 2);
+      cone.translate(0, 0, 0.55 * s);
+      return mergeCompound([column, cone]);
     },
   },
 
-  // Núcleo do Vazio: toro pulsante — não parece um motor comum.
+  // Núcleo do Vazio: toro gravitacional com núcleo de singularidade.
   engine_void: {
     mount: 'engine',
     color: 0x14101e,
     emissive: 0xff5f6d,
     glow: 1,
-    build: (s) => new THREE.TorusGeometry(0.34 * s, 0.12 * s, 8, 16),
+    build: (s) => {
+      const ring1 = new THREE.TorusGeometry(0.32 * s, 0.06 * s, 6, 16);
+      const ring2 = new THREE.TorusGeometry(0.22 * s, 0.05 * s, 6, 12);
+      ring2.rotateY(Math.PI / 2);
+      const core = new THREE.SphereGeometry(0.12 * s, 8, 8);
+      return mergeCompound([ring1, ring2, core]);
+    },
   },
 
   // ---------------------------------------------------------- Dobra
-  // Bobina: anel duplo pulsante na traseira.
+  // Bobina de dobra: anéis de indução de campo subespacial.
   warp_coil: {
     mount: 'engine',
     color: 0x1a2a3e,
     emissive: 0x66d9ff,
     glow: 1,
-    build: (s) => new THREE.TorusGeometry(0.42 * s, 0.08 * s, 8, 20),
+    build: (s) => {
+      const ringF = new THREE.TorusGeometry(0.36 * s, 0.06 * s, 6, 16);
+      ringF.translate(0, 0, -0.15 * s);
+      const ringB = new THREE.TorusGeometry(0.36 * s, 0.06 * s, 6, 16);
+      ringB.translate(0, 0, 0.15 * s);
+      const bar = new THREE.BoxGeometry(0.1 * s, 0.1 * s, 0.4 * s);
+      return mergeCompound([ringF, ringB, bar]);
+    },
   },
 
-  // Captador: antena em espiral no dorso — o "farejador" de rastro.
+  // Captador: antena em espiral quântica.
   vortex_tap: {
     mount: 'dorsal',
     color: 0xb8c4d4,
     emissive: 0xb06bff,
     glow: 0.7,
-    build: (s) => new THREE.TorusKnotGeometry(0.24 * s, 0.05 * s, 48, 6),
+    build: (s) => {
+      const base = new THREE.CylinderGeometry(0.15 * s, 0.2 * s, 0.1 * s, 6);
+      const knot = new THREE.TorusKnotGeometry(0.2 * s, 0.04 * s, 36, 6);
+      knot.translate(0, 0.15 * s, 0);
+      return mergeCompound([base, knot]);
+    },
   },
 
   // Estabilizador: aletas de esteira sob a barriga.
@@ -205,54 +281,78 @@ const VISUALS: Record<string, PartVisual> = {
     color: 0x2e3a4c,
     emissive: 0x45e5a4,
     glow: 0.5,
-    build: (s) => new THREE.ConeGeometry(0.2 * s, 0.9 * s, 6, 1, true),
+    build: (s) => {
+      const fin = new THREE.BoxGeometry(0.08 * s, 0.6 * s, 0.8 * s);
+      fin.translate(0, -0.25 * s, 0);
+      const bulb = new THREE.CylinderGeometry(0.06 * s, 0.06 * s, 0.85 * s, 6);
+      bulb.rotateX(Math.PI / 2);
+      bulb.translate(0, -0.55 * s, 0);
+      return mergeCompound([fin, bulb]);
+    },
   },
 
   // -------------------------------------------------------- Escudos
-  // Emissor dorsal: cúpula achatada sobre o casco.
+  // Emissor dorsal bio-plásmico com anel de contenção.
   shield_bio: {
     mount: 'dorsal',
     color: 0x1c3a34,
     emissive: 0x45e5a4,
     glow: 0.55,
-    build: (s) => new THREE.SphereGeometry(0.34 * s, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+    build: (s) => {
+      const dome = new THREE.SphereGeometry(0.3 * s, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+      const baseRing = new THREE.TorusGeometry(0.32 * s, 0.04 * s, 6, 12);
+      baseRing.rotateX(Math.PI / 2);
+      return mergeCompound([dome, baseRing]);
+    },
   },
 
-  // Defletor de fase: anel girando na horizontal.
+  // Defletor de fase: anel de deflexão com raios de sustentação.
   shield_phase: {
     mount: 'dorsal',
     color: 0x16304a,
     emissive: 0x4ec9ff,
     glow: 0.9,
     build: (s) => {
-      const g = new THREE.TorusGeometry(0.42 * s, 0.05 * s, 6, 20);
-      g.rotateX(Math.PI / 2);
-      return g;
+      const ring = new THREE.TorusGeometry(0.38 * s, 0.04 * s, 6, 16);
+      ring.rotateX(Math.PI / 2);
+      const spoke1 = new THREE.BoxGeometry(0.72 * s, 0.04 * s, 0.04 * s);
+      const spoke2 = new THREE.BoxGeometry(0.04 * s, 0.04 * s, 0.72 * s);
+      return mergeCompound([ring, spoke1, spoke2]);
     },
   },
 
-  // Baluarte: blocos de blindagem grossos, sem brilho.
+  // Baluarte: blocos escalonados de blindagem reativa pesada.
   shield_bulwark: {
     mount: 'dorsal',
     color: 0x4a4438,
     metalness: 0.85,
     roughness: 0.6,
-    build: (s) => new THREE.BoxGeometry(0.8 * s, 0.26 * s, 1.1 * s),
+    build: (s) => {
+      const lowerPlate = new THREE.BoxGeometry(0.75 * s, 0.15 * s, 1.0 * s);
+      const upperPlate = new THREE.BoxGeometry(0.55 * s, 0.12 * s, 0.75 * s);
+      upperPlate.translate(0, 0.12 * s, 0);
+      return mergeCompound([lowerPlate, upperPlate]);
+    },
   },
 
   // ------------------------------------------------------- Sensores
+  // Array de sensores: mastro telescópico com barras dipolo cruzadas.
   sensor_array: {
     mount: 'dorsal',
     color: 0x9aa4b2,
     emissive: 0x4ec9ff,
     glow: 0.3,
     build: (s) => {
-      const g = new THREE.CylinderGeometry(0.02 * s, 0.02 * s, 0.9 * s, 4);
-      return g;
+      const mast = new THREE.CylinderGeometry(0.03 * s, 0.04 * s, 0.85 * s, 6);
+      const bar1 = new THREE.BoxGeometry(0.35 * s, 0.02 * s, 0.04 * s);
+      bar1.translate(0, 0.25 * s, 0);
+      const bar2 = new THREE.BoxGeometry(0.22 * s, 0.02 * s, 0.04 * s);
+      bar2.translate(0, 0.38 * s, 0);
+      return mergeCompound([mast, bar1, bar2]);
     },
   },
 
-  // Varredura profunda: prato parabólico — inconfundível.
+  // Varredura profunda: prato parabólico orientável com haste receptora.
   sensor_deep: {
     mount: 'dorsal',
     color: 0xc8d2e0,
@@ -261,41 +361,62 @@ const VISUALS: Record<string, PartVisual> = {
     metalness: 0.4,
     roughness: 0.5,
     build: (s) => {
-      const g = new THREE.SphereGeometry(0.42 * s, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2.6);
-      g.rotateX(-Math.PI / 2.2);
-      return g;
+      const dish = new THREE.SphereGeometry(0.38 * s, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2.6);
+      dish.rotateX(-Math.PI / 2.2);
+      const pivot = new THREE.CylinderGeometry(0.08 * s, 0.12 * s, 0.15 * s, 6);
+      pivot.translate(0, -0.15 * s, 0);
+      const feed = new THREE.CylinderGeometry(0.02 * s, 0.03 * s, 0.25 * s, 4);
+      feed.translate(0, 0.1 * s, -0.2 * s);
+      return mergeCompound([dish, pivot, feed]);
     },
   },
 
   // ---------------------------------------------------------- Carga
+  // Módulo de carga estanque com nervuras de reforço.
   cargo_x2: {
     mount: 'ventral',
     color: 0x5c5142,
     metalness: 0.5,
     roughness: 0.75,
-    build: (s) => new THREE.BoxGeometry(0.5 * s, 0.34 * s, 0.9 * s),
+    build: (s) => {
+      const pod = new THREE.BoxGeometry(0.48 * s, 0.32 * s, 0.85 * s);
+      const ribs = new THREE.BoxGeometry(0.52 * s, 0.34 * s, 0.25 * s);
+      return mergeCompound([pod, ribs]);
+    },
   },
 
-  // Porão industrial: contêiner enorme sob a barriga.
+  // Porão industrial: duplo contêiner reforçado para frete pesado.
   cargo_hauler: {
     mount: 'ventral',
     color: 0x6b5a3c,
     metalness: 0.45,
     roughness: 0.8,
-    build: (s) => new THREE.BoxGeometry(0.95 * s, 0.6 * s, 1.9 * s),
+    build: (s) => {
+      const podL = new THREE.BoxGeometry(0.35 * s, 0.35 * s, 1.4 * s);
+      podL.translate(-0.2 * s, 0, 0);
+      const podR = new THREE.BoxGeometry(0.35 * s, 0.35 * s, 1.4 * s);
+      podR.translate(0.2 * s, 0, 0);
+      const spine = new THREE.BoxGeometry(0.2 * s, 0.15 * s, 1.5 * s);
+      spine.translate(0, 0.18 * s, 0);
+      return mergeCompound([podL, podR, spine]);
+    },
   },
 
   // ----------------------------------------------------- Furtividade
-  // Camuflagem: painéis facetados nas pontas das asas.
+  // Painel facetado defletor de radar.
   cloak_lvl1: {
     mount: 'wingtip',
     color: 0x2a2438,
     metalness: 0.2,
     roughness: 0.95,
-    build: (s) => new THREE.OctahedronGeometry(0.24 * s, 0),
+    build: (s) => {
+      const baffle = new THREE.ConeGeometry(0.2 * s, 0.4 * s, 4);
+      baffle.rotateX(Math.PI / 2);
+      return baffle;
+    },
   },
 
-  // Manto Umbra: painéis maiores e quase pretos, que "engolem" a luz.
+  // Manto Umbra: defletores escalonados de absorção quântica.
   cloak_umbra: {
     mount: 'wingtip',
     color: 0x0b0a12,
@@ -303,7 +424,11 @@ const VISUALS: Record<string, PartVisual> = {
     glow: 0.25,
     metalness: 0.05,
     roughness: 1,
-    build: (s) => new THREE.OctahedronGeometry(0.4 * s, 1),
+    build: (s) => {
+      const outer = new THREE.OctahedronGeometry(0.32 * s, 0);
+      const inner = new THREE.BoxGeometry(0.15 * s, 0.15 * s, 0.45 * s);
+      return mergeCompound([outer, inner]);
+    },
   },
 };
 

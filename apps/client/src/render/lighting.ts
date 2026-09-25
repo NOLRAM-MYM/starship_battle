@@ -41,20 +41,20 @@ export function createLightingRig(scene: THREE.Scene): LightingRig {
   const group = new THREE.Group();
   group.name = 'lighting-rig';
 
-  const hemi = new THREE.HemisphereLight(0x5b7fb4, 0x1a1030, 0.55);
+  const hemi = new THREE.HemisphereLight(0x6487c6, 0x24143a, 0.65);
 
-  const key = new THREE.DirectionalLight(0xdcecff, 2.2);
+  const key = new THREE.DirectionalLight(0xfff2e3, 2.4);
   key.position.set(60, 80, 40);
 
-  const fill = new THREE.DirectionalLight(0x4a6ea8, 0.7);
+  const fill = new THREE.DirectionalLight(0x4b72b0, 0.75);
   fill.position.set(-70, -20, 30);
 
-  const rim = new THREE.DirectionalLight(0x9d7bff, 1.4);
+  const rim = new THREE.DirectionalLight(0xa885ff, 1.65);
   rim.position.set(-30, 20, -80);
 
   // Só existe depois de `attachCameraFill`; criada aqui para o rig ter
   // um objeto estável desde o começo.
-  const cameraFill = new THREE.DirectionalLight(0xbcd4ff, 0.85);
+  const cameraFill = new THREE.DirectionalLight(0xc0daff, 0.9);
   cameraFill.position.set(0.45, 0.8, 0);
   cameraFill.target.position.set(0, 0, -1);
 

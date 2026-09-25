@@ -47,6 +47,8 @@ export interface NetClientOptions {
   consumables?: ConsumableSlot[];
   /** Entrar no campo de provas, com alvos de treino. */
   practice?: boolean;
+  /** Classe de piloto; o servidor aplica os multiplicadores dela. */
+  pilotClass?: string;
   reconnectDelayMs?: number;
   /** Tentativas de reconexão antes de desistir. */
   maxRetries?: number;
@@ -82,6 +84,7 @@ export function connect(opts: NetClientOptions): NetClient {
           skills: opts.skills ?? [],
           consumables: opts.consumables ?? [],
           practice: opts.practice ?? false,
+          pilotClass: opts.pilotClass ?? '',
         },
       };
       ws?.send(encodeClientMsg(join));

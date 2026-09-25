@@ -11,6 +11,8 @@ pub mod flight;
 pub mod skills;
 pub mod weapons;
 pub mod builder;
+pub mod sensors;
+pub mod pilot;
 pub mod template;
 
 use serde::{Deserialize, Serialize};

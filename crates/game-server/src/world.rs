@@ -128,6 +128,24 @@ pub struct Ship {
     pub skill_input: Option<ActiveSkill>,
     /// Slot de consumível que o jogador pediu para usar neste tick.
     pub consumable_input: Option<u8>,
+    pub survival_timer: f32,
+    pub pursuit_timer: f32,
+    pub evasive_timer: f32,
+    pub in_gravity_well: bool,
+    /// Segundos restantes de "em combate", renovados a cada dano sofrido.
+    ///
+    /// A sobrevivência só conta enquanto isto é positivo. Sem ele, ficar
+    /// parado num canto rendia 80 XP por minuto, gravados na conta.
+    pub combat_timer: f32,
+    /// Alcance de sensor somado dos módulos (ver `sim_core::ship::sensors`).
+    pub sensor_range: f32,
+    /// Furtividade somada dos módulos, 0..=0.9.
+    pub stealth: f32,
+    /// Recarga do XP de fuga de poço gravitacional.
+    ///
+    /// Sem recarga, oscilar na borda do poço dava 45 XP a cada saída —
+    /// várias por segundo, sem esforço nenhum.
+    pub well_escape_cooldown: f32,
 }
 
 impl Default for Ship {
@@ -171,6 +189,14 @@ impl Default for Ship {
             skills: SkillManager::new(),
             skill_input: None,
             consumable_input: None,
+            survival_timer: 0.0,
+            pursuit_timer: 0.0,
+            evasive_timer: 0.0,
+            in_gravity_well: false,
+            combat_timer: 0.0,
+            sensor_range: 0.0,
+            stealth: 0.0,
+            well_escape_cooldown: 0.0,
         }
     }
 }
@@ -229,6 +255,26 @@ pub struct Wreck {
     pub loot_count: u32,
 }
 
+/// Por quanto tempo uma nave conta como "em combate" depois de ser atingida.
+const COMBATE_DURA: f32 = 15.0;
+
+/// Intervalo mínimo entre dois XP de fuga de poço gravitacional.
+const RECARGA_FUGA_DE_POCO: f32 = 60.0;
+
+/// Evento de XP pendente para ser enviado aos jogadores.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingXp {
+    pub player_id: u32,
+    pub amount: u32,
+    pub reason: String,
+    /// Dividido com o grupo?
+    ///
+    /// Só o abate é mérito coletivo. Sobreviver, escapar de um poço ou
+    /// perseguir são feitos de uma nave só — e compartilhá-los fazia cada
+    /// membro de um grupo de N receber N vezes o próprio XP.
+    pub shared: bool,
+}
+
 /// Mundo de simulação.
 #[derive(Debug, Default)]
 pub struct World {
@@ -279,6 +325,13 @@ pub struct World {
     next_id: EntityId,
     destroyed: Vec<(EntityId, Option<u32>)>,
     events: Vec<crate::net::protocol::ServerMsg>,
+    pending_xp: Vec<PendingXp>,
+    /// Jogadores no campo de provas: não acumulam XP.
+    ///
+    /// O campo existe para testar mecânicas, e tudo nele se repete sem
+    /// custo — recarregar a página recria os alvos, e o Caçador lança
+    /// torpedos sem parar. Com XP gravado na conta, isso era uma fábrica.
+    practice_players: std::collections::HashSet<u32>,
     last_dt: f32,
 }
 
@@ -408,10 +461,27 @@ impl World {
         template_ids: &[String],
         skill_nodes: &[String],
     ) {
+        self.apply_build(player_id, template_ids, skill_nodes, "");
+    }
+
+    /// Loadout, skills E classe de piloto.
+    ///
+    /// A classe entra por último, por cima de tudo, na mesma ordem do
+    /// hangar (`statsForLoadout`): o que o estaleiro mostra é o que voa.
+    pub fn apply_build(
+        &mut self,
+        player_id: u32,
+        template_ids: &[String],
+        skill_nodes: &[String],
+        pilot_class: &str,
+    ) {
         let Some(&id) = self.player_ships.get(&player_id) else { return };
         let Some((_, _, _, ship)) = self.ships.get_mut(&id) else { return };
         let stats = sim_core::ship::weapons::resolve_loadout(template_ids);
         let (warp, ganho) = sim_core::ship::warp::resolve_warp(template_ids);
+        let deteccao = sim_core::ship::sensors::resolve_deteccao(template_ids);
+        ship.sensor_range = deteccao.sensor;
+        ship.stealth = deteccao.furtividade;
 
         // Lançador de torpedos: é uma peça à parte da arma primária,
         // com tecla própria. Uma nave pode ter as duas.
@@ -439,6 +509,22 @@ impl World {
         } else {
             0.0
         };
+
+        // --- Classe de piloto ---
+        let m = sim_core::ship::pilot::pilot_modifiers(pilot_class);
+        ship.weapon.damage *= m.damage;
+        ship.weapon.fire_rate *= m.fire_rate;
+        if let Some(t) = ship.torpedo.as_mut() {
+            t.damage *= m.damage;
+        }
+        ship.shield_max = (ship.shield_max * m.shield).max(0.0);
+        ship.shield_hp = ship.shield_max;
+        ship.shield_regen *= m.shield_regen;
+        ship.hull_max = (ship.hull_max * m.hull).max(1.0);
+        ship.hull_hp = ship.hull_max;
+        ship.thrust_capacity *= m.thrust;
+        ship.sensor_range *= m.sensor_range;
+        ship.stealth = sim_core::ship::sensors::furtividade_total(template_ids, m.stealth_bonus);
     }
 
     pub fn spawn_player_ship(&mut self, player_id: u32, name: String) -> EntityId {
@@ -494,6 +580,14 @@ impl World {
             skills,
             skill_input: None,
             consumable_input: None,
+            survival_timer: 0.0,
+            pursuit_timer: 0.0,
+            evasive_timer: 0.0,
+            in_gravity_well: false,
+            combat_timer: 0.0,
+            sensor_range: 0.0,
+            stealth: 0.0,
+            well_escape_cooldown: 0.0,
         };
 
         // Ponto de surgimento espalhado num anel.
@@ -521,6 +615,7 @@ impl World {
 
     /// Remove a nave do jogador (desconexão) e limpa os índices.
     pub fn despawn_player(&mut self, player_id: u32) {
+        self.practice_players.remove(&player_id);
         if let Some(id) = self.player_ships.remove(&player_id) {
             self.ships.remove(&id);
             self.destroyed.push((id, None));
@@ -858,12 +953,48 @@ impl World {
                 new_ship.shield_hp -= absorvido;
                 let restante = contra_escudo - absorvido + direto;
                 new_ship.hull_hp = (new_ship.hull_hp - restante).max(0.0);
+                if dmg > 0.0 {
+                    new_ship.combat_timer = COMBATE_DURA;
+                }
 
                 if new_ship.hull_hp <= 0.0 {
                     self.destroyed.push((
                         ship_id,
                         if attacker_id != 0 { Some(attacker_id) } else { None },
                     ));
+                    // Alvo de treino não vale XP: ele reaparece a cada
+                    // recarga da página, e qualquer nave no mundo — não
+                    // só o dono do campo — podia abatê-lo em série.
+                    if attacker_id != 0 && new_ship.training.is_none() {
+                        let mut base_xp = if new_ship.mass > 1500.0 {
+                            250
+                        } else if new_ship.mass > 800.0 {
+                            180
+                        } else {
+                            120
+                        };
+                        let mut reason = format!(
+                            "Oponente Aniquilado ({})",
+                            if new_ship.name.is_empty() { "Caça" } else { &new_ship.name }
+                        );
+                        if let Some(&atk_sid) = self.player_ships.get(&attacker_id) {
+                            if let Some((ap, _, _, atk_ship)) = self.ships.get(&atk_sid) {
+                                let dist = ((ap.x - p.x).powi(2)
+                                    + (ap.y - p.y).powi(2)
+                                    + (ap.z - p.z).powi(2))
+                                .sqrt();
+                                if dist >= 500.0 {
+                                    base_xp += 50;
+                                    reason.push_str(" + Longa Distância");
+                                }
+                                if atk_ship.hull_hp < atk_ship.hull_max * 0.25 {
+                                    base_xp += 75;
+                                    reason.push_str(" + Casco Crítico");
+                                }
+                            }
+                        }
+                        self.grant_shared_xp(attacker_id, base_xp, reason);
+                    }
                 }
                 self.ships.insert(ship_id, (p, v, r, new_ship));
             }
@@ -883,6 +1014,28 @@ impl World {
     /// Retorna e limpa a lista de eventos efêmeros do último step.
     pub fn take_events(&mut self) -> Vec<crate::net::protocol::ServerMsg> {
         std::mem::take(&mut self.events)
+    }
+
+    /// Concede XP a um jogador por uma ação de combate, manobra ou sobrevivência.
+    pub fn grant_xp(&mut self, player_id: u32, amount: u32, reason: impl Into<String>) {
+        self.push_xp(player_id, amount, reason.into(), false);
+    }
+
+    /// Como `grant_xp`, mas dividido com o grupo do jogador (abates).
+    pub fn grant_shared_xp(&mut self, player_id: u32, amount: u32, reason: impl Into<String>) {
+        self.push_xp(player_id, amount, reason.into(), true);
+    }
+
+    fn push_xp(&mut self, player_id: u32, amount: u32, reason: String, shared: bool) {
+        if player_id == 0 || amount == 0 || self.practice_players.contains(&player_id) {
+            return;
+        }
+        self.pending_xp.push(PendingXp { player_id, amount, reason, shared });
+    }
+
+    /// Retorna e limpa os ganhos de XP pendentes do último step.
+    pub fn take_pending_xp(&mut self) -> Vec<PendingXp> {
+        std::mem::take(&mut self.pending_xp)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1179,6 +1332,75 @@ impl World {
                 y: pos.y + new_vel.y * dt,
                 z: pos.z + new_vel.z * dt,
             };
+
+            // XP de Sobrevivência — só sob fogo.
+            ship.combat_timer = (ship.combat_timer - dt).max(0.0);
+            ship.well_escape_cooldown = (ship.well_escape_cooldown - dt).max(0.0);
+            if ship.combat_timer > 0.0 {
+                ship.survival_timer += dt;
+            }
+            if ship.survival_timer >= 15.0 {
+                ship.survival_timer = 0.0;
+                if ship.owner_player_id != 0 {
+                    let amount = if ship.hull_hp < ship.hull_max * 0.3 { 50 } else { 20 };
+                    let reason = if ship.hull_hp < ship.hull_max * 0.3 {
+                        "Sobrevivência sob Vida Crítica"
+                    } else {
+                        "Sobrevivência em Arena"
+                    };
+                    self.grant_xp(ship.owner_player_id, amount, reason);
+                }
+            }
+
+            // XP de Escape de Poço Gravitacional
+            let in_well = self.dominant_body_at([new_pos.x, new_pos.y, new_pos.z]).is_some();
+            if in_well {
+                ship.in_gravity_well = true;
+            } else if ship.in_gravity_well {
+                ship.in_gravity_well = false;
+                if ship.owner_player_id != 0 && ship.well_escape_cooldown <= 0.0 {
+                    ship.well_escape_cooldown = RECARGA_FUGA_DE_POCO;
+                    self.grant_xp(ship.owner_player_id, 45, "Escape de Poço Gravitacional");
+                }
+            }
+
+            // XP de Perseguição com Impulso
+            // Só persegue quem é INIMIGO: o id vem do cliente, e sem esta
+            // checagem acelerar atrás de um aliado ou de um alvo de treino
+            // rendia XP do mesmo jeito.
+            let alvo_hostil = ship.aim_target.filter(|t| match self.ships.get(t) {
+                Some((_, _, _, alvo)) => alvo.training.is_none() && !self.sao_aliados(id, *t),
+                None => self.npc_positions.contains_key(t),
+            });
+            if let (true, Some(target_id)) = (ship.thrust_input >= 0.8, alvo_hostil) {
+                let target_pos = self
+                    .ships
+                    .get(&target_id)
+                    .map(|(tp, _, _, _)| *tp)
+                    .or_else(|| self.npc_positions.get(&target_id).map(|(tp, _)| *tp));
+                if let Some(tp) = target_pos {
+                    let d = ((tp.x - new_pos.x).powi(2)
+                        + (tp.y - new_pos.y).powi(2)
+                        + (tp.z - new_pos.z).powi(2))
+                    .sqrt();
+                    if d <= 800.0 {
+                        ship.pursuit_timer += dt;
+                        if ship.pursuit_timer >= 3.0 {
+                            ship.pursuit_timer = 0.0;
+                            if ship.owner_player_id != 0 {
+                                self.grant_xp(ship.owner_player_id, 35, "Perseguição Tática com Impulso");
+                            }
+                        }
+                    } else {
+                        ship.pursuit_timer = 0.0;
+                    }
+                } else {
+                    ship.pursuit_timer = 0.0;
+                }
+            } else {
+                ship.pursuit_timer = 0.0;
+            }
+
             // Cooldown e decrementado em try_fire_weapons.
             // Guarda a velocidade DESTE tick para o próximo medir a
             // aceleração. É o que distingue quem voa reto de quem acabou
@@ -1582,7 +1804,7 @@ fn assist_para(
 
     // Alvo pode ser nave ou torpedo. Para a nave também se checa a
     // aliança: o auxílio não pode ajudar a acertar o próprio esquadrão.
-    let (alvo_pos, alvo_vel, alvo_accel, alvo_em_dobra) =
+    let (alvo_pos, alvo_vel, alvo_accel, alvo_em_dobra, alvo_furtivo) =
         if let Some((p, v, _, s)) = world.ships.get(&alvo_id) {
             if s.team != sim_core::ship::team::TEAM_NONE && s.team == ship.team {
                 return (0.0, 0.0);
@@ -1594,7 +1816,7 @@ fn assist_para(
                 (v.z - s.last_vel[2]) / dt.max(1e-4),
             ];
             let a = (dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]).sqrt();
-            (*p, [v.x, v.y, v.z], a, s.warp_remaining > 0.0)
+            (*p, [v.x, v.y, v.z], a, s.warp_remaining > 0.0, s.stealth)
         } else if let Some((p, t)) = world.torpedoes.get(&alvo_id) {
             // Torpedo em curva acelera transversalmente o tempo todo; a
             // aceleração aqui é a da própria trajetória, o que já torna
@@ -1606,7 +1828,7 @@ fn assist_para(
                 t.dir[2] * t.speed,
             ];
             let a = t.transverse_accel(dt);
-            (*p, v, a, false)
+            (*p, v, a, false, 0.0)
         } else {
             return (0.0, 0.0);
         };
@@ -1650,7 +1872,11 @@ fn assist_para(
         },
         &DEFAULT_ASSIST,
     );
-    (r.pitch, r.yaw)
+    // A furtividade do alvo enfraquece o rastreamento: é mais difícil
+    // acompanhar o que o sensor mal enxerga. Sem isto os mantos não
+    // tinham efeito nenhum sobre quem mira.
+    let f = sim_core::ship::sensors::fator_de_furtividade(alvo_furtivo);
+    (r.pitch * f, r.yaw * f)
 }
 
 /// milhares de ticks e a nave começa a deformar/escorregar.
@@ -1700,7 +1926,7 @@ fn rot_to_bits(r: Rotation) -> [u32; 4] { [r.x.to_bits(), r.y.to_bits(), r.z.to_
 ///
 /// Alta de propósito: um lançador de repetição transformaria o combate
 /// em administrar torpedos em vez de pilotar.
-const TORPEDO_COOLDOWN: f32 = 9.0;
+pub(crate) const TORPEDO_COOLDOWN: f32 = 9.0;
 /// Quanto tempo as iscas de dispersão continuam confundindo, em segundos.
 const DECOY_TTL: f32 = 4.0;
 /// Distância em que uma isca ainda cobre a nave.
@@ -3239,7 +3465,7 @@ impl World {
     pub fn launch_torpedo(&mut self, player_id: u32, target: EntityId) {
         let Some(&id) = self.player_ships.get(&player_id) else { return };
         let Some((pos, _, rot, ship)) = self.ships.get(&id).cloned() else { return };
-        let Some(perfil) = ship.torpedo else { return };
+        let Some(mut perfil) = ship.torpedo else { return };
         if ship.torpedo_cooldown > 0.0 || ship.emp_remaining > 0.0 {
             return;
         }
@@ -3247,11 +3473,20 @@ impl World {
         if target == id {
             return;
         }
-        let Some((tpos, _, _, _)) = self.ships.get(&target) else { return };
-        let d2 = dist_sq(pos, *tpos);
-        if d2 > perfil.lock_range * perfil.lock_range {
+        let Some((tpos, _, _, alvo)) = self.ships.get(&target) else { return };
+        // Sensores de quem lança ampliam o alcance; a furtividade do alvo
+        // o encurta.
+        let alcance = sim_core::ship::sensors::alcance_de_trava(
+            perfil.lock_range,
+            ship.sensor_range,
+            alvo.stealth,
+        );
+        if dist_sq(pos, *tpos) > alcance * alcance {
             return;
         }
+        // O torpedo leva o alcance ampliado pelos sensores de quem o
+        // lançou: é o rastreador da nave que o guia até o fim.
+        perfil.lock_range *= sim_core::ship::sensors::ganho_de_sensor(ship.sensor_range);
 
         let fwd = forward(&rot);
         let torp = sim_core::ship::torpedo::Torpedo::new(
@@ -3347,21 +3582,25 @@ impl World {
 
             // --- Trava ---
             let alvo_pos = torp.target.and_then(|t| {
-                self.ships
-                    .get(&t)
-                    .map(|(p, v, _, _)| (*p, (v.x * v.x + v.y * v.y + v.z * v.z).sqrt()))
+                self.ships.get(&t).map(|(p, v, _, s)| {
+                    (*p, (v.x * v.x + v.y * v.y + v.z * v.z).sqrt(), s.stealth)
+                })
             });
 
             match alvo_pos {
-                Some((tp, vel_alvo)) => {
+                Some((tp, vel_alvo, furtividade)) => {
                     let dist = dist_sq(pos, tp).sqrt();
+                    // A furtividade do alvo encurta também a MANUTENÇÃO da
+                    // trava: um manto ajuda a despistar o torpedo já em voo.
+                    let alcance = torp.profile.lock_range
+                        * sim_core::ship::sensors::fator_de_furtividade(furtividade);
                     // Isca perto do ALVO, não do torpedo: é o alvo que
                     // se esconde atrás delas.
                     let iscas = self
                         .decoys
                         .iter()
                         .any(|(dp, _, _)| dist_sq(*dp, tp) <= DECOY_RADIUS * DECOY_RADIUS);
-                    if let Err(motivo) = check_lock(vel_alvo, dist, torp.profile.lock_range, iscas) {
+                    if let Err(motivo) = check_lock(vel_alvo, dist, alcance, iscas) {
                         torp.lose_lock();
                         self.events.push(crate::net::protocol::ServerMsg::TorpedoLockLost {
                             torpedo_id: tid,
@@ -3504,6 +3743,21 @@ impl World {
         });
     }
 
+    /// O torpedo pertence a um aliado de quem atirou?
+    ///
+    /// O torpedo carrega o time de quem o lançou justamente porque o
+    /// lançador pode morrer durante o voo; por isso a comparação é contra
+    /// esse time, e não contra a nave de origem. Grupos só valem enquanto
+    /// as duas naves existem.
+    fn torpedo_e_aliado(&self, atirador: EntityId, torp: &sim_core::ship::torpedo::Torpedo) -> bool {
+        use sim_core::ship::team::{relation, Relation};
+        let Some((_, _, _, nave)) = self.ships.get(&atirador) else { return false };
+        if relation(nave.team, torp.owner_team) == Relation::Friendly {
+            return true;
+        }
+        self.ships.contains_key(&torp.owner_entity) && self.sao_aliados(atirador, torp.owner_entity)
+    }
+
     /// Projéteis podem ABATER torpedos — a quarta defesa.
     ///
     /// Roda depois da colisão normal de projéteis: um tiro gasto num
@@ -3514,28 +3768,56 @@ impl World {
         let mut proj_gastos: Vec<EntityId> = Vec::new();
         let mut torp_abatidos: Vec<(EntityId, Position)> = Vec::new();
 
+        let mut xp_interceptacao: Vec<u32> = Vec::new();
+
         for pid in proj_ids {
             let Some((ppos, _, proj)) = self.projectiles.get(&pid).cloned() else { continue };
-            for (tid, (tpos, torp)) in self.torpedoes.iter_mut() {
-                // Não abate o próprio torpedo.
+
+            // Primeiro ENCONTRA o torpedo, só lendo o mundo; depois aplica.
+            // A checagem de aliança consulta as naves, e não dá para
+            // fazê-la com os torpedos emprestados para escrita.
+            let atingido = self.torpedoes.iter().find_map(|(tid, (tpos, torp))| {
                 // Não abate o próprio torpedo — por entidade, de novo,
                 // porque o id de jogador 0 é compartilhado.
                 if torp.owner_entity == proj.owner_entity
                     || (torp.owner_player_id != 0
                         && torp.owner_player_id == proj.owner_player_id)
                 {
-                    continue;
+                    return None;
                 }
                 let raio = proj.radius + torp.profile.radius;
                 if dist_sq(ppos, *tpos) > raio * raio {
-                    continue;
+                    return None;
                 }
-                if torp.take_damage(proj.damage) {
-                    torp_abatidos.push((*tid, *tpos));
+                // Nem o de um ALIADO. O fogo amigo é desligado para naves,
+                // e os torpedos ficavam de fora: o tiro de um companheiro
+                // derrubava o seu torpedo — e ainda rendia XP a ele, o que
+                // num grupo virava um moinho de 50 XP por lançamento.
+                if self.torpedo_e_aliado(proj.owner_entity, torp) {
+                    return None;
                 }
-                proj_gastos.push(pid);
-                break;
+                Some(*tid)
+            });
+
+            let Some(tid) = atingido else { continue };
+            let Some((tpos, torp)) = self.torpedoes.get_mut(&tid) else { continue };
+            if torp.take_damage(proj.damage) {
+                torp_abatidos.push((tid, *tpos));
+                // Torpedo de alvo de treino não conta: o Caçador lança
+                // sem parar.
+                let de_treino = self
+                    .ships
+                    .get(&torp.owner_entity)
+                    .is_some_and(|(_, _, _, s)| s.training.is_some());
+                if proj.owner_player_id != 0 && !de_treino {
+                    xp_interceptacao.push(proj.owner_player_id);
+                }
             }
+            proj_gastos.push(pid);
+        }
+
+        for jogador in xp_interceptacao {
+            self.grant_xp(jogador, 50, "Torpedo Interceptado");
         }
 
         for pid in proj_gastos {
@@ -3948,6 +4230,7 @@ impl World {
         let Some((pos, _, _, dono)) = self.ships.get(&id) else { return };
         let centro = *pos;
         let time_do_jogador = dono.team;
+        self.practice_players.insert(player_id);
 
         // Remove um campo anterior antes de montar outro.
         //
@@ -4730,3 +5013,454 @@ mod mira_assistida {
 
 }
 
+
+#[cfg(test)]
+mod xp_sem_brechas {
+    //! O XP é gravado na conta, então cada brecha aqui é permanente.
+    //!
+    //! Estes testes fixam as regras que separam mérito de moinho: o campo
+    //! de provas não paga, alvo de treino não paga, aliado não é alvo,
+    //! sobreviver exige estar sob fogo, e a fuga de poço tem recarga.
+
+    use super::*;
+
+    fn arena(jogadores: &[u32]) -> World {
+        let mut w = World::new();
+        for p in jogadores {
+            w.spawn_player_ship(*p, format!("p{p}"));
+            w.apply_loadout(
+                *p,
+                &[
+                    "railgun_s".to_string(),
+                    "engine_mk3".to_string(),
+                    "torpedo_seeker".to_string(),
+                ],
+            );
+        }
+        w
+    }
+
+    /// Longe de qualquer corpo celeste, para a gravidade não interferir.
+    const LONGE: Position = Position { x: 90_000.0, y: 90_000.0, z: 90_000.0 };
+
+    fn posicionar(w: &mut World, atirador: u32, alvo: u32, dist: f32) -> (EntityId, EntityId) {
+        let a = w.player_ships[&atirador];
+        let b = w.player_ships[&alvo];
+        w.ships.get_mut(&a).unwrap().0 = LONGE;
+        w.ships.get_mut(&b).unwrap().0 = Position { z: LONGE.z + dist, ..LONGE };
+        (a, b)
+    }
+
+    /// Projétil letal de `dono` em cima de `alvo`, e a colisão resolvida.
+    fn abater(w: &mut World, dono: u32, alvo: EntityId) {
+        let pid = w.alloc_id();
+        let pos = w.ships[&alvo].0;
+        let owner_entity = w.player_ships.get(&dono).copied().unwrap_or(0);
+        w.projectiles.insert(
+            pid,
+            (
+                pos,
+                Velocity::default(),
+                Projectile {
+                    owner_player_id: dono,
+                    owner_entity,
+                    damage: 1.0e6,
+                    ttl_remaining: 3.0,
+                    radius: 5.0,
+                    speed: 100.0,
+                    splash_radius: 0.0,
+                    visual: 0,
+                    charge: 0.0,
+                },
+            ),
+        );
+        w.check_projectile_collisions();
+    }
+
+    /// Projétil de `dono` parado sobre o primeiro torpedo do mundo.
+    fn tiro_no_torpedo(w: &mut World, dono: u32) {
+        let (tpos, _) = w.torpedoes.values().next().cloned().unwrap();
+        let pid = w.alloc_id();
+        w.projectiles.insert(
+            pid,
+            (
+                tpos,
+                Velocity::default(),
+                Projectile {
+                    owner_player_id: dono,
+                    owner_entity: w.player_ships[&dono],
+                    damage: 1.0e6,
+                    ttl_remaining: 3.0,
+                    radius: 2.0,
+                    speed: 100.0,
+                    splash_radius: 0.0,
+                    visual: 0,
+                    charge: 0.0,
+                },
+            ),
+        );
+        w.projectiles_vs_torpedoes();
+    }
+
+    fn xp_de(w: &mut World, jogador: u32, motivo: &str) -> Vec<PendingXp> {
+        w.take_pending_xp()
+            .into_iter()
+            .filter(|x| x.player_id == jogador && x.reason.contains(motivo))
+            .collect()
+    }
+
+    // ------------------------------------------------------------ abates
+
+    #[test]
+    fn abater_inimigo_rende_xp_para_o_grupo() {
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 50.0);
+        abater(&mut w, 1, alvo);
+        let ganhos = xp_de(&mut w, 1, "Aniquilado");
+        assert_eq!(ganhos.len(), 1, "o abate tem que pagar");
+        assert!(ganhos[0].shared, "abate é mérito do grupo");
+    }
+
+    #[test]
+    fn alvo_de_treino_abatido_nao_rende_xp() {
+        // O jogador 2 NÃO está em treino: abatia os alvos do campo do
+        // jogador 1, que reaparecem a cada recarga da página.
+        let mut w = arena(&[1, 2]);
+        w.ships.get_mut(&w.player_ships[&1]).unwrap().0 = LONGE;
+        w.spawn_training_range(1);
+        let alvo = w
+            .ships
+            .iter()
+            .find(|(_, (_, _, _, s))| s.training.is_some())
+            .map(|(id, _)| *id)
+            .expect("o campo de provas cria alvos");
+        abater(&mut w, 2, alvo);
+        assert!(xp_de(&mut w, 2, "").is_empty());
+    }
+
+    // ------------------------------------------------------ campo de provas
+
+    #[test]
+    fn campo_de_provas_nao_rende_xp() {
+        let mut w = arena(&[1]);
+        w.spawn_training_range(1);
+        w.grant_xp(1, 50, "qualquer coisa");
+        w.grant_shared_xp(1, 50, "qualquer coisa");
+        assert!(w.take_pending_xp().is_empty());
+    }
+
+    #[test]
+    fn sair_do_treino_devolve_o_xp() {
+        // O registro não pode vazar para a próxima partida de verdade.
+        let mut w = arena(&[1]);
+        w.spawn_training_range(1);
+        w.despawn_player(1);
+        w.spawn_player_ship(1, "p1".into());
+        w.grant_xp(1, 50, "partida real");
+        assert_eq!(w.take_pending_xp().len(), 1);
+    }
+
+    // -------------------------------------------------------------- torpedos
+
+    #[test]
+    fn interceptar_torpedo_inimigo_rende_xp() {
+        let mut w = arena(&[1, 2]);
+        let (_, alvo) = posicionar(&mut w, 1, 2, 300.0);
+        w.launch_torpedo(1, alvo);
+        tiro_no_torpedo(&mut w, 2);
+        assert!(w.torpedoes.is_empty());
+        assert_eq!(xp_de(&mut w, 2, "Torpedo").len(), 1);
+    }
+
+    #[test]
+    fn tiro_aliado_nao_derruba_torpedo_aliado() {
+        // Fogo amigo desligado vale para torpedos também — e era por aqui
+        // que um grupo fabricava 50 XP por lançamento.
+        let mut w = arena(&[1, 2, 3]);
+        let (a, _) = posicionar(&mut w, 1, 3, 300.0);
+        let b = w.player_ships[&2];
+        let time = w.ships[&a].3.team;
+        w.ships.get_mut(&b).unwrap().3.team = time;
+        w.ships.get_mut(&b).unwrap().0 = LONGE;
+        let alvo = w.player_ships[&3];
+        w.launch_torpedo(1, alvo);
+
+        tiro_no_torpedo(&mut w, 2);
+        assert_eq!(w.torpedoes.len(), 1, "o torpedo aliado tem que sobreviver");
+        assert!(xp_de(&mut w, 2, "Torpedo").is_empty());
+    }
+
+    // ----------------------------------------------------------- sobrevivência
+
+    #[test]
+    fn ficar_parado_nao_rende_sobrevivencia() {
+        let mut w = arena(&[1]);
+        w.ships.get_mut(&w.player_ships[&1]).unwrap().0 = LONGE;
+        for _ in 0..(30 * 20) {
+            w.step(1.0 / 30.0);
+        }
+        assert!(xp_de(&mut w, 1, "Sobrevivência").is_empty());
+    }
+
+    #[test]
+    fn sobreviver_sob_fogo_rende_xp() {
+        let mut w = arena(&[1]);
+        let id = w.player_ships[&1];
+        w.ships.get_mut(&id).unwrap().0 = LONGE;
+        for _ in 0..(30 * 16) {
+            // Como se fosse atingido o tempo todo.
+            w.ships.get_mut(&id).unwrap().3.combat_timer = COMBATE_DURA;
+            w.step(1.0 / 30.0);
+        }
+        assert_eq!(xp_de(&mut w, 1, "Sobrevivência").len(), 1);
+    }
+
+    // --------------------------------------------------------- poço e perseguição
+
+    #[test]
+    fn fuga_de_poco_tem_recarga() {
+        // Oscilar na borda do poço dava XP a cada saída.
+        let mut w = arena(&[1]);
+        let id = w.player_ships[&1];
+        w.ships.get_mut(&id).unwrap().0 = LONGE;
+        let mut fugas = 0;
+        for _ in 0..10 {
+            w.ships.get_mut(&id).unwrap().3.in_gravity_well = true;
+            w.step(1.0 / 30.0);
+            fugas += xp_de(&mut w, 1, "Poço").len();
+        }
+        assert_eq!(fugas, 1, "dez saídas seguidas só podem pagar uma");
+    }
+
+    fn perseguir(aliado: bool) -> usize {
+        let mut w = arena(&[1, 2]);
+        let (a, b) = posicionar(&mut w, 1, 2, 300.0);
+        if aliado {
+            let time = w.ships[&a].3.team;
+            w.ships.get_mut(&b).unwrap().3.team = time;
+        }
+        let mut total = 0;
+        for _ in 0..(30 * 4) {
+            // Os dois aceleram igual: a distância fica constante.
+            w.set_input(1, 0.0, 0.0, 0.0, 1.0, false, 0.0, None, None, false, Some(b));
+            w.set_input(2, 0.0, 0.0, 0.0, 1.0, false, 0.0, None, None, false, None);
+            w.step(1.0 / 30.0);
+            total += xp_de(&mut w, 1, "Perseguição").len();
+        }
+        total
+    }
+
+    #[test]
+    fn perseguir_inimigo_rende_xp() {
+        assert!(perseguir(false) > 0);
+    }
+
+    #[test]
+    fn perseguir_aliado_nao_rende_xp() {
+        assert_eq!(perseguir(true), 0);
+    }
+}
+
+#[cfg(test)]
+mod sensores_e_camuflagem {
+    //! Sensores e mantos eram vendidos e não faziam nada além de pesar.
+    //!
+    //! Estes testes fixam o efeito no mundo de verdade: o sensor de quem
+    //! lança amplia a trava do torpedo, o manto de quem é alvo a encurta,
+    //! e a mira assistida enfraquece contra um alvo camuflado.
+
+    use super::*;
+
+    const LONGE: Position = Position { x: 90_000.0, y: 90_000.0, z: 90_000.0 };
+
+    /// Atirador (1) com perseguidor (trava-base 900) e alvo (2) a `dist`.
+    fn cena(extras_atirador: &[&str], extras_alvo: &[&str], dist: f32) -> World {
+        let mut w = World::new();
+        w.spawn_player_ship(1, "a".into());
+        w.spawn_player_ship(2, "b".into());
+        let mut la = vec!["torpedo_seeker".to_string()];
+        la.extend(extras_atirador.iter().map(|s| s.to_string()));
+        let mut lb = vec!["railgun_s".to_string()];
+        lb.extend(extras_alvo.iter().map(|s| s.to_string()));
+        w.apply_loadout(1, &la);
+        w.apply_loadout(2, &lb);
+        let a = w.player_ships[&1];
+        let b = w.player_ships[&2];
+        w.ships.get_mut(&a).unwrap().0 = LONGE;
+        w.ships.get_mut(&b).unwrap().0 = Position { z: LONGE.z + dist, ..LONGE };
+        w
+    }
+
+    fn lanca(w: &mut World) -> bool {
+        let alvo = w.player_ships[&2];
+        w.launch_torpedo(1, alvo);
+        !w.torpedoes.is_empty()
+    }
+
+    #[test]
+    fn sem_sensor_nao_trava_alem_do_alcance_base() {
+        let mut w = cena(&[], &[], 1100.0);
+        assert!(!lanca(&mut w));
+    }
+
+    #[test]
+    fn sensor_profundo_trava_mais_longe() {
+        // 900 × 1,5 = 1350: os 1100 ficam dentro.
+        let mut w = cena(&["sensor_deep"], &[], 1100.0);
+        assert!(lanca(&mut w), "o sensor deveria ampliar a trava");
+    }
+
+    #[test]
+    fn o_torpedo_leva_o_alcance_ampliado() {
+        // Senão ele adquiria a 1100 e perdia a trava no tick seguinte.
+        let mut w = cena(&["sensor_deep"], &[], 1100.0);
+        assert!(lanca(&mut w));
+        let (_, t) = w.torpedoes.values().next().unwrap();
+        assert!((t.profile.lock_range - 1350.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn manto_impede_a_trava_dentro_do_alcance_base() {
+        // 900 × 0,55 = 495: a 700 o alvo camuflado não é travável.
+        let mut sem = cena(&[], &[], 700.0);
+        assert!(lanca(&mut sem), "controle: sem manto trava");
+        let mut com = cena(&[], &["cloak_umbra"], 700.0);
+        assert!(!lanca(&mut com), "o manto deveria impedir a trava");
+    }
+
+    #[test]
+    fn manto_ajuda_a_despistar_o_torpedo_em_voo() {
+        // Travado de perto, o alvo se afasta até uma distância que sem
+        // manto ainda seguraria a trava (≤ 900 × 1,5) mas com manto não.
+        let mut w = cena(&[], &["cloak_lvl1"], 300.0);
+        assert!(lanca(&mut w));
+        let b = w.player_ships[&2];
+        let a = w.player_ships[&1];
+        let pa = w.ships[&a].0;
+        w.ships.get_mut(&b).unwrap().0 = Position { z: pa.z + 1250.0, ..pa };
+        w.step(1.0 / 30.0);
+        let (_, t) = w.torpedoes.values().next().expect("torpedo em voo");
+        assert!(t.target.is_none(), "a trava deveria ter caído");
+    }
+
+    fn giro_assistido(extras_alvo: &[&str]) -> f32 {
+        let mut w = World::new();
+        w.spawn_player_ship(1, "a".into());
+        w.spawn_player_ship(2, "b".into());
+        w.apply_loadout(1, &["railgun_s".to_string(), "engine_mk3".to_string()]);
+        let mut lb = vec!["railgun_s".to_string()];
+        lb.extend(extras_alvo.iter().map(|s| s.to_string()));
+        w.apply_loadout(2, &lb);
+        let a = w.player_ships[&1];
+        let b = w.player_ships[&2];
+        w.ships.get_mut(&a).unwrap().0 = LONGE;
+        w.ships.get_mut(&a).unwrap().2 = Rotation::default();
+        let r = 6f32.to_radians();
+        w.ships.get_mut(&b).unwrap().0 =
+            Position { x: LONGE.x + 300.0 * r.sin(), y: LONGE.y, z: LONGE.z + 300.0 * r.cos() };
+        let antes = forward(&w.ships[&a].2);
+        for _ in 0..10 {
+            w.set_input(1, 0.0, 0.0, 0.0, 0.0, false, 0.0, None, None, true, Some(b));
+            w.step(1.0 / 30.0);
+        }
+        let depois = forward(&w.ships[&a].2);
+        let c = antes[0] * depois[0] + antes[1] * depois[1] + antes[2] * depois[2];
+        c.clamp(-1.0, 1.0).acos()
+    }
+
+    #[test]
+    fn manto_enfraquece_a_mira_assistida() {
+        let normal = giro_assistido(&[]);
+        let camuflado = giro_assistido(&["cloak_umbra"]);
+        assert!(normal > 0.0, "controle: o auxílio age");
+        assert!(
+            camuflado < normal * 0.8,
+            "contra o manto o auxílio deveria girar menos: {normal} vs {camuflado}"
+        );
+    }
+
+    #[test]
+    fn modulos_pesam_no_jogo_como_no_hangar() {
+        // Torpedos, bobina e captadores tinham massa zero no servidor.
+        for id in ["torpedo_seeker", "torpedo_heavy", "warp_coil", "vortex_tap", "wake_stabilizer"] {
+            assert!(
+                sim_core::ship::weapons::component_mass(id) > 0.0,
+                "{id} sem massa no servidor"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod classes_de_piloto {
+    //! A classe escolhida no hangar vale em combate.
+    //!
+    //! Antes só mudava as barras do estaleiro: o servidor nunca soube qual
+    //! classe o jogador tinha escolhido.
+
+    use super::*;
+
+    fn nave(loadout: &[&str], classe: &str) -> Ship {
+        let mut w = World::new();
+        w.spawn_player_ship(1, "p".into());
+        let ids: Vec<String> = loadout.iter().map(|s| s.to_string()).collect();
+        w.apply_build(1, &ids, &[], classe);
+        w.ships[&w.player_ships[&1]].3.clone()
+    }
+
+    const BASE: &[&str] = &["railgun_s", "engine_mk3", "shield_bio", "torpedo_seeker"];
+
+    #[test]
+    fn classe_desconhecida_nao_muda_nada() {
+        let neutra = nave(BASE, "");
+        let lixo = nave(BASE, "nao-existe");
+        assert_eq!(neutra.weapon, lixo.weapon);
+        assert_eq!(neutra.hull_max, lixo.hull_max);
+    }
+
+    #[test]
+    fn espectro_bate_mais_forte_e_aguenta_menos() {
+        let n = nave(BASE, "");
+        let g = nave(BASE, "ghost");
+        assert!((g.weapon.damage - n.weapon.damage * 1.28).abs() < 1e-3);
+        assert!((g.hull_max - n.hull_max * 0.88).abs() < 1e-2);
+        assert!((g.shield_max - n.shield_max * 0.8).abs() < 1e-2);
+        assert!(g.shield_hp == g.shield_max, "nasce com o escudo cheio");
+    }
+
+    #[test]
+    fn o_dano_da_classe_vale_para_o_torpedo() {
+        let n = nave(BASE, "");
+        let g = nave(BASE, "ghost");
+        let (tn, tg) = (n.torpedo.unwrap().damage, g.torpedo.unwrap().damage);
+        assert!((tg - tn * 1.28).abs() < 1e-3);
+    }
+
+    #[test]
+    fn as_atira_mais_rapido_e_acelera_mais() {
+        let n = nave(BASE, "");
+        let a = nave(BASE, "ace");
+        assert!((a.weapon.fire_rate - n.weapon.fire_rate * 1.15).abs() < 1e-3);
+        assert!((a.thrust_capacity - n.thrust_capacity * 1.18).abs() < 1e-2);
+    }
+
+    #[test]
+    fn colosso_e_mais_lento() {
+        assert!(nave(BASE, "juggernaut").thrust_capacity < nave(BASE, "").thrust_capacity);
+    }
+
+    #[test]
+    fn furtividade_soma_antes_de_limitar_como_no_hangar() {
+        // Void (−0,12) + Espectro (+0,15) = 0,03. Limitando antes
+        // daria 0,15 — e o hangar mostraria outra coisa.
+        let g = nave(&["engine_void"], "ghost");
+        assert!((g.stealth - 0.03).abs() < 1e-4, "{}", g.stealth);
+    }
+
+    #[test]
+    fn a_classe_amplia_os_sensores() {
+        let n = nave(&["sensor_deep"], "");
+        let g = nave(&["sensor_deep"], "ghost");
+        assert!((g.sensor_range - n.sensor_range * 1.25).abs() < 1e-2);
+    }
+}

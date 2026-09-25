@@ -66,21 +66,46 @@ export function createCompass(): CompassHandle {
   /** Reaproveita nós entre frames: recriar tudo geraria lixo a 60fps. */
   const edgePool = new Map<string, HTMLElement>();
 
+  // A fita também reaproveita seus nós.
+  //
+  // Ela refazia `innerHTML` das duas listas a cada quadro: o navegador
+  // reinterpretava o HTML e recriava todos os elementos 60 vezes por
+  // segundo, mesmo com a nave parada. Agora cada cardeal e cada marco tem
+  // um nó fixo, e só a posição e o texto são atualizados — e só quando
+  // mudam.
+  const tickPool = new Map<string, HTMLElement>();
+  const edgeParts = new WeakMap<HTMLElement, { seta: HTMLElement; nome: Text; dist: HTMLElement }>();
+  const markPool = new Map<
+    string,
+    { node: HTMLElement; glyph: HTMLElement; name: HTMLElement; dist: HTMLElement }
+  >();
+
   function update(
     origin: Vec3,
     heading: number,
     points: readonly NavPoint[],
     selectedId: string | null,
   ): void {
-    headingBox.textContent = `${Math.round(heading).toString().padStart(3, '0')}°`;
+    texto(headingBox, `${Math.round(heading).toString().padStart(3, '0')}°`);
 
     // ---- Cardeais ----
-    ticks.innerHTML = cardinalMarks(heading, FOV)
-      .map(
-        (c) =>
-          `<span class="nav-tick" style="left:${(c.ribbonPos * 100).toFixed(2)}%">${c.label}</span>`,
-      )
-      .join('');
+    const cardeaisVivos = new Set<string>();
+    for (const c of cardinalMarks(heading, FOV)) {
+      cardeaisVivos.add(c.label);
+      let node = tickPool.get(c.label);
+      if (!node) {
+        node = document.createElement('span');
+        node.className = 'nav-tick';
+        node.textContent = c.label;
+        ticks.appendChild(node);
+        tickPool.set(c.label, node);
+      }
+      estilo(node, 'left', `${(c.ribbonPos * 100).toFixed(2)}%`);
+      estilo(node, 'display', '');
+    }
+    for (const [label, node] of tickPool) {
+      if (!cardeaisVivos.has(label)) estilo(node, 'display', 'none');
+    }
 
     // ---- Marcos na fita ----
     // `compassMarks` já vem ordenado do mais próximo ao mais distante.
@@ -96,17 +121,33 @@ export function createCompass(): CompassHandle {
       return true;
     });
 
-    marks.innerHTML = naFita
-      .map((m) => {
-        const sel = m.point.id === selectedId ? ' selected' : '';
-        const cor = `#${m.point.color.toString(16).padStart(6, '0')}`;
-        return `<span class="nav-mark${sel}" style="left:${((m.ribbonPos ?? 0) * 100).toFixed(2)}%;--mk:${cor}">
-                  <i>${GLYPH[m.point.kind] ?? '◆'}</i>
-                  <b>${escapeHtml(m.point.name)}</b>
-                  <u>${formatDistance(m.distance)}</u>
-                </span>`;
-      })
-      .join('');
+    const marcosVivos = new Set<string>();
+    for (const m of naFita) {
+      marcosVivos.add(m.point.id);
+      let ref = markPool.get(m.point.id);
+      if (!ref) {
+        const node = document.createElement('span');
+        const glyph = document.createElement('i');
+        const name = document.createElement('b');
+        const dist = document.createElement('u');
+        node.append(glyph, name, dist);
+        marks.appendChild(node);
+        ref = { node, glyph, name, dist };
+        markPool.set(m.point.id, ref);
+      }
+      const sel = m.point.id === selectedId ? ' selected' : '';
+      if (ref.node.className !== `nav-mark${sel}`) ref.node.className = `nav-mark${sel}`;
+      estilo(ref.node, 'left', `${((m.ribbonPos ?? 0) * 100).toFixed(2)}%`);
+      estilo(ref.node, '--mk', `#${m.point.color.toString(16).padStart(6, '0')}`);
+      estilo(ref.node, 'display', '');
+      // textContent já escapa: o nome do marco não passa mais por HTML.
+      texto(ref.glyph, GLYPH[m.point.kind] ?? '◆');
+      texto(ref.name, m.point.name);
+      texto(ref.dist, formatDistance(m.distance));
+    }
+    for (const [id, ref] of markPool) {
+      if (!marcosVivos.has(id)) estilo(ref.node, 'display', 'none');
+    }
 
     // ---- Marcadores de borda ----
     const w = window.innerWidth;
@@ -133,16 +174,32 @@ export function createCompass(): CompassHandle {
       if (!node) {
         node = document.createElement('div');
         node.className = 'nav-edge';
+        // Estrutura fixa: antes o marcador refazia `innerHTML` todo quadro.
+        const seta = document.createElement('i');
+        seta.textContent = '➤';
+        const rotulo = document.createElement('span');
+        // Nó de texto, como era: um <span> aqui herdaria o `display:flex`
+        // de `.nav-edge span`.
+        const nome = document.createTextNode('');
+        const dist = document.createElement('b');
+        rotulo.append(nome, dist);
+        node.append(seta, rotulo);
+        edgeParts.set(node, { seta, nome, dist });
         edges.appendChild(node);
         edgePool.set(m.point.id, node);
       }
 
-      node.style.transform = `translate(${pos.x.toFixed(0)}px, ${pos.y.toFixed(0)}px)`;
-      node.classList.toggle('on-screen', pos.onScreen);
-      node.classList.toggle('selected', m.point.id === selectedId);
-      node.style.setProperty('--mk', `#${m.point.color.toString(16).padStart(6, '0')}`);
-      node.innerHTML = `<i style="transform:rotate(${pos.angle.toFixed(3)}rad)">➤</i>
-                        <span>${escapeHtml(m.point.name)}<b>${formatDistance(m.distance)}</b></span>`;
+      estilo(node, 'transform', `translate(${pos.x.toFixed(0)}px, ${pos.y.toFixed(0)}px)`);
+      if (node.classList.contains('on-screen') !== pos.onScreen) {
+        node.classList.toggle('on-screen', pos.onScreen);
+      }
+      const sel = m.point.id === selectedId;
+      if (node.classList.contains('selected') !== sel) node.classList.toggle('selected', sel);
+      estilo(node, '--mk', `#${m.point.color.toString(16).padStart(6, '0')}`);
+      const partes = edgeParts.get(node)!;
+      estilo(partes.seta, 'transform', `rotate(${pos.angle.toFixed(3)}rad)`);
+      if (partes.nome.data !== m.point.name) partes.nome.data = m.point.name;
+      texto(partes.dist, formatDistance(m.distance));
     }
 
     for (const [id, node] of edgePool) {
@@ -163,8 +220,21 @@ export function createCompass(): CompassHandle {
   };
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '"' ? '&quot;' : '&#39;',
-  );
+function texto(node: HTMLElement, v: string): void {
+  if (node.textContent !== v) node.textContent = v;
+}
+
+/** Último valor escrito por propriedade (o navegador normaliza o que lê). */
+const escritos = new WeakMap<HTMLElement, Map<string, string>>();
+
+function estilo(node: HTMLElement, prop: string, v: string): void {
+  let m = escritos.get(node);
+  if (!m) {
+    m = new Map();
+    escritos.set(node, m);
+  }
+  if (m.get(prop) === v) return;
+  m.set(prop, v);
+  if (v === '') node.style.removeProperty(prop);
+  else node.style.setProperty(prop, v);
 }

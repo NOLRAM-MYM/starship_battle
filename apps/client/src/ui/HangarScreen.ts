@@ -173,9 +173,13 @@ export class HangarScreen {
       this.render();
     } catch (err) {
       console.error('Falha ao carregar loadouts:', err);
+      // O MOTIVO na tela: "não foi possível" não diz se é a senha, o
+      // servidor ou a rede, e as mensagens já vêm prontas de `apiErrors`.
+      const motivo = err instanceof Error ? err.message : 'Erro desconhecido.';
       this.renderShell(`
         <div class="hangar-status error">
           <p>Não foi possível carregar sua frota.</p>
+          <p class="hangar-status-motivo">${escapeHtml(motivo)}</p>
           <button class="btn" id="hangar-retry">Tentar novamente</button>
         </div>`);
       this.root

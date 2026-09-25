@@ -59,3 +59,12 @@ describe('skillNodeIds', () => {
     expect(skillNodeIds(torto)).toEqual([]);
   });
 });
+
+describe('postXp', () => {
+  it('ignora valores não-positivos ou sem token', async () => {
+    const { postXp } = await import('../src/net/progressionApi.js');
+    expect(await postXp(0)).toBeNull();
+    expect(await postXp(-10)).toBeNull();
+  });
+});
+

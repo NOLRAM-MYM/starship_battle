@@ -34,7 +34,7 @@ export interface Progression {
  * anterior — degrada, não quebra.
  */
 export async function fetchProgression(): Promise<Progression | null> {
-  const token = localStorage.getItem('token');
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
   if (!token) return null;
   try {
     const res = await fetch(`${API_URL}/progression/me`, {
@@ -68,3 +68,36 @@ export function skillNodeIds(p: Progression | null): string[] {
   }
   return ids;
 }
+
+export interface XpResult {
+  totalXp: number;
+  level: number;
+  leveledUp: boolean;
+}
+
+/**
+ * Persiste ganho de XP na API / Postgres.
+ *
+ * Garante que a evolução de nível da conta e da nave permaneça gravada
+ * mesmo após morrer em combate ou fechar o jogo.
+ */
+export async function postXp(amount: number): Promise<XpResult | null> {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
+  if (!token || !Number.isInteger(amount) || amount <= 0) return null;
+  try {
+    const res = await fetch(`${API_URL}/progression/xp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ amount }),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { result?: XpResult };
+    return body.result ?? null;
+  } catch {
+    return null;
+  }
+}
+

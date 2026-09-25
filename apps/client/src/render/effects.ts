@@ -8,7 +8,7 @@
 
 import * as THREE from 'three/webgpu';
 
-export type VfxKind = 'thruster' | 'muzzle' | 'impact' | 'explosion';
+export type VfxKind = 'thruster' | 'muzzle' | 'impact' | 'explosion' | 'shield';
 
 interface Particle {
   life: number;
@@ -21,12 +21,13 @@ interface Particle {
 
 /** Perfil de cada tipo de efeito: contagem, velocidade, vida e cor. */
 const PROFILE: Record<VfxKind, { count: number; speed: number; life: number; size: number; color: number }> = {
-  thruster: { count: 2, speed: 6, life: 0.35, size: 1.6, color: 0x66d9ff },
-  muzzle: { count: 8, speed: 26, life: 0.18, size: 2.2, color: 0xffd166 },
-  impact: { count: 20, speed: 22, life: 0.5, size: 2.4, color: 0xff8a5c },
+  thruster: { count: 4, speed: 9, life: 0.45, size: 2.2, color: 0x66e5ff },
+  muzzle: { count: 12, speed: 32, life: 0.22, size: 3.0, color: 0xffe070 },
+  impact: { count: 28, speed: 28, life: 0.6, size: 3.2, color: 0xff7b42 },
+  shield: { count: 18, speed: 22, life: 0.42, size: 2.8, color: 0x4ec9ff },
   // Explosão: muitas partículas, rápidas e grandes. É o evento mais
   // importante do combate — precisa dominar o quadro por um instante.
-  explosion: { count: 90, speed: 46, life: 1.6, size: 5.0, color: 0xffb05f },
+  explosion: { count: 120, speed: 52, life: 1.8, size: 6.5, color: 0xffa042 },
 };
 
 export interface VfxSystem {
@@ -140,11 +141,14 @@ export function createVfxSystem(capacity = 1200): VfxSystem {
         const part = particles[i];
         if (!part || part.life <= 0) continue;
         part.life -= dt;
+        const px = i * 3;
         if (part.life <= 0) {
           sizes[i] = 0;
+          colors[px] = 0;
+          colors[px + 1] = 0;
+          colors[px + 2] = 0;
           continue;
         }
-        const px = i * 3;
         positions[px] = (positions[px] ?? 0) + part.vx * dt;
         positions[px + 1] = (positions[px + 1] ?? 0) + part.vy * dt;
         positions[px + 2] = (positions[px + 2] ?? 0) + part.vz * dt;

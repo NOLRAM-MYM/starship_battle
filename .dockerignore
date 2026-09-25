@@ -1,0 +1,22 @@
+node_modules
+apps/*/node_modules
+target
+dist
+apps/*/dist
+.git
+.github
+graphify-out
+.venv
+tmp
+
+# Segredos nunca entram no contexto de build.
+#
+# O Dockerfile da API copia `apps/api` inteiro para a imagem final, e o
+# `apps/api/.env` (segredo do JWT, senha do banco) ia junto: qualquer um
+# com acesso à imagem lia os segredos. O contêiner recebe as variáveis
+# pelo compose, e o `start` não lê `.env` — excluir não quebra nada.
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example

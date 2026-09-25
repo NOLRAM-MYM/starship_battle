@@ -48,6 +48,9 @@ export class LoginScreen {
           <button class="btn" id="btn-register">Registrar</button>
           <button class="btn btn-primary" id="btn-login">Entrar</button>
         </div>
+        <div style="margin-top: 10px; text-align: center;">
+          <button class="btn" id="btn-guest" style="width: 100%; opacity: 0.85;">🎮 Jogar como Visitante (Offline/Sem Conta)</button>
+        </div>
         <div id="login-error" role="status"></div>
         <p class="login-hint">Enter envia. Seu callsign aparece no HUD e no hangar.</p>
       </div>`;
@@ -57,6 +60,7 @@ export class LoginScreen {
 
     const btnLogin = q<HTMLButtonElement>('#btn-login');
     const btnRegister = q<HTMLButtonElement>('#btn-register');
+    const btnGuest = q<HTMLButtonElement>('#btn-guest');
     const userIn = q<HTMLInputElement>('#login-user');
     const emailIn = q<HTMLInputElement>('#login-email');
     const passIn = q<HTMLInputElement>('#login-pass');
@@ -127,6 +131,11 @@ export class LoginScreen {
 
     btnLogin.addEventListener('click', () => void doLogin());
     btnRegister.addEventListener('click', () => void doRegister());
+    btnGuest.addEventListener('click', () => {
+      localStorage.removeItem('token');
+      localStorage.setItem('username', userIn.value.trim() || 'Piloto');
+      this.onSuccess?.();
+    });
 
     // Enter em qualquer campo entra — o caminho comum não deve exigir mouse.
     for (const input of [userIn, emailIn, passIn]) {

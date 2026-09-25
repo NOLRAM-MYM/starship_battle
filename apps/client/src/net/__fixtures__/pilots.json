@@ -1,0 +1,6 @@
+{
+  "ace": { "thrust": 1.18, "damage": 1, "fireRate": 1.15, "shield": 0.92, "shieldRegen": 1, "hull": 0.9, "sensorRange": 1, "cargo": 1, "stealthBonus": 0 },
+  "juggernaut": { "thrust": 0.85, "damage": 1.08, "fireRate": 1, "shield": 1.22, "shieldRegen": 1, "hull": 1.3, "sensorRange": 1, "cargo": 1, "stealthBonus": 0 },
+  "ghost": { "thrust": 1, "damage": 1.28, "fireRate": 1, "shield": 0.8, "shieldRegen": 1, "hull": 0.88, "sensorRange": 1.25, "cargo": 1, "stealthBonus": 0.15 },
+  "prospector": { "thrust": 1, "damage": 0.82, "fireRate": 1, "shield": 1, "shieldRegen": 1.35, "hull": 1, "sensorRange": 1.15, "cargo": 1.6, "stealthBonus": 0 }
+}

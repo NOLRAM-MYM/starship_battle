@@ -20,7 +20,11 @@ export type SoundId =
   | 'engine'
   | 'ui_click'
   | 'ui_error'
-  | 'quest_complete';
+  | 'quest_complete'
+  | 'shield_hit'
+  | 'thruster'
+  | 'alarm'
+  | 'skill';
 
 export type SoundCategory = 'sfx' | 'music';
 
@@ -66,6 +70,14 @@ function makeBuffer(ctx: AudioContext, id: SoundId): AudioBuffer {
       return makeSine(ctx, 220, 0.1, 0.5);
     case 'quest_complete':
       return makeChord(ctx, [523.25, 659.25, 783.99], 0.05, 0.4, 'triangle');
+    case 'shield_hit':
+      return makeSine(ctx, 620, 0.12, 0.35);
+    case 'thruster':
+      return makeSawtooth(ctx, 80, 0.25, 0.2);
+    case 'alarm':
+      return makeSquare(ctx, 920, 0.08, 0.35);
+    case 'skill':
+      return makeChord(ctx, [330, 495, 660], 0.12, 0.35, 'triangle');
   }
 }
 
@@ -175,6 +187,10 @@ const SOUND_CATEGORY: Record<SoundId, SoundCategory> = {
   ui_click: 'sfx',
   ui_error: 'sfx',
   quest_complete: 'sfx',
+  shield_hit: 'sfx',
+  thruster: 'sfx',
+  alarm: 'sfx',
+  skill: 'sfx',
 };
 
 export function createAudioBus(opts: AudioBusOpts): AudioBusHandle {
@@ -238,6 +254,9 @@ export function createAudioBus(opts: AudioBusOpts): AudioBusHandle {
 
   function play(id: SoundId, playOpts?: PlayOpts): AudioBufferSourceNode | null {
     if (!ctx) return null;
+    if (ctx.state === 'suspended') {
+      void ctx.resume();
+    }
     const cat = SOUND_CATEGORY[id];
     const catNode = categories[cat].gain;
     const buffer = getBuffer(id);

@@ -124,6 +124,13 @@
 }
 .hangar-status.error { color: var(--danger); }
 .hangar-status .btn { margin-top: 12px; }
+/* Motivo da falha: menor e discreto, abaixo da frase principal. */
+.hangar-status-motivo {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  max-width: 34rem;
+}
 
 .hangar-shell {
   display: flex;

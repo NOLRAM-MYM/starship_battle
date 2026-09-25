@@ -16,35 +16,35 @@ export function asteroidMaterialFor(kind: number): THREE.MeshStandardMaterial {
   switch (kind) {
     case 0: // Rock
       return new THREE.MeshStandardMaterial({
-        color: 0x888888,
-        metalness: 0.1,
-        roughness: 0.95,
+        color: 0x8a929a,
+        metalness: 0.15,
+        roughness: 0.88,
       });
     case 1: // Iron
       return new THREE.MeshStandardMaterial({
-        color: 0xaa6644,
-        metalness: 0.65,
-        roughness: 0.55,
+        color: 0xb8734c,
+        metalness: 0.78,
+        roughness: 0.42,
       });
     case 2: // Gold
       return new THREE.MeshStandardMaterial({
-        color: 0xffcc44,
-        metalness: 0.9,
-        roughness: 0.25,
-        emissive: 0x332200,
+        color: 0xffd24d,
+        metalness: 0.95,
+        roughness: 0.18,
+        emissive: 0x442e00,
       });
     case 3: // DarkMatter
       return new THREE.MeshStandardMaterial({
-        color: 0x442266,
-        metalness: 0.3,
-        roughness: 0.4,
-        emissive: 0x110022,
+        color: 0x5a2d8a,
+        metalness: 0.45,
+        roughness: 0.3,
+        emissive: 0x240845,
       });
     default:
       return new THREE.MeshStandardMaterial({
-        color: 0x888888,
-        metalness: 0.1,
-        roughness: 0.95,
+        color: 0x8a929a,
+        metalness: 0.15,
+        roughness: 0.88,
       });
   }
 }

@@ -293,6 +293,13 @@ pub fn component_mass(template_id: &str) -> f32 {
         "cargo_hauler" => 30.0,
         "cloak_lvl1" => 12.0,
         "cloak_umbra" => 22.0,
+        // Estes pesavam no hangar e não pesavam no jogo: a aceleração
+        // mostrada no estaleiro não era a que se sentia em voo.
+        "torpedo_seeker" => 22.0,
+        "torpedo_heavy" => 44.0,
+        "warp_coil" => 18.0,
+        "vortex_tap" => 11.0,
+        "wake_stabilizer" => 14.0,
         _ => 0.0,
     }
 }

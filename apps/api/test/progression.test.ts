@@ -235,3 +235,92 @@ describe('progression service (com Postgres mockado)', () => {
     });
   });
 });
+
+describe('XP não pode ser forjado à vontade', () => {
+  // A rota nasceu como ferramenta de depuração e aceitava qualquer
+  // inteiro positivo: um pedido com `amount: 2000000000` dava nível
+  // máximo e o topo do ranking. O cliente passou a gravar o XP do
+  // combate por ela, e a porta dos fundos virou a da frente.
+  let app: FastifyInstance;
+  const token = signToken({ accountId: 91, username: 'forjador' });
+
+  beforeEach(async () => {
+    const svc = await import('../src/progression/service.js');
+    svc._resetOrcamentosDeXp();
+    app = await buildServer({ testMode: true });
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('um valor absurdo é recusado antes de chegar ao banco', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/progression/xp',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { amount: 2_000_000_000 },
+    });
+    // 400, e não o 503 de "banco fora": o pedido nem é considerado.
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('o maior prêmio legítimo ainda passa pela validação', async () => {
+    const svc = await import('../src/progression/service.js');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/progression/xp',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { amount: svc.MAX_XP_POR_PEDIDO },
+    });
+    // Sem Postgres em modo de teste: 503 significa que PASSOU da
+    // validação e do orçamento.
+    expect(res.statusCode).toBe(503);
+  });
+
+  it('o orçamento por minuto barra a enxurrada', async () => {
+    const svc = await import('../src/progression/service.js');
+    const agora = 1_000_000;
+    let aceitos = 0;
+    for (let i = 0; i < 100; i++) {
+      if (svc.consumirOrcamentoDeXp(91, svc.MAX_XP_POR_PEDIDO, agora)) aceitos++;
+    }
+    expect(aceitos * svc.MAX_XP_POR_PEDIDO).toBeLessThanOrEqual(svc.ORCAMENTO_XP_POR_MINUTO);
+    expect(aceitos).toBeGreaterThan(0);
+  });
+
+  it('o orçamento se renova depois da janela', async () => {
+    const svc = await import('../src/progression/service.js');
+    const agora = 5_000_000;
+    while (svc.consumirOrcamentoDeXp(92, 400, agora));
+    expect(svc.consumirOrcamentoDeXp(92, 400, agora + 1_000)).toBe(false);
+    expect(svc.consumirOrcamentoDeXp(92, 400, agora + 61_000)).toBe(true);
+  });
+
+  it('o orçamento é por conta', async () => {
+    // Um jogador no teto não pode travar o XP de outro.
+    const svc = await import('../src/progression/service.js');
+    const agora = 9_000_000;
+    while (svc.consumirOrcamentoDeXp(93, 400, agora));
+    expect(svc.consumirOrcamentoDeXp(94, 400, agora)).toBe(true);
+  });
+
+  it('estourar o orçamento responde 429', async () => {
+    // Pelo HTTP, que é o caminho real — e com uma conta só deste teste.
+    const outro = signToken({ accountId: 95, username: 'enxurrada' });
+    const pedir = () =>
+      app.inject({
+        method: 'POST',
+        url: '/progression/xp',
+        headers: { authorization: `Bearer ${outro}` },
+        payload: { amount: 400 },
+      });
+    const codigos: number[] = [];
+    for (let i = 0; i < 10; i++) codigos.push((await pedir()).statusCode);
+    // Os primeiros passam da validação (503: sem banco em teste); depois
+    // do teto, o pedido é barrado antes mesmo de tentar o banco.
+    expect(codigos.slice(0, 7).every((c) => c === 503)).toBe(true);
+    expect(codigos.slice(8)).toEqual([429, 429]);
+  });
+});

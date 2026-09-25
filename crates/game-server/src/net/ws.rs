@@ -203,6 +203,7 @@ async fn handle_conn(
                         skills,
                         consumables,
                         practice,
+                        pilot_class,
                     } => {
                         if protocol != PROTOCOL_VERSION {
                             // Cliente desatualizado: avisa e encerra, em vez
@@ -221,6 +222,7 @@ async fn handle_conn(
                             modulos = loadout.len(),
                             skills = skills.len(),
                             cargas = consumables.len(),
+                            classe = %pilot_class,
                             "player joined"
                         );
                         state.enqueue(PlayerCommand::Join {
@@ -230,6 +232,7 @@ async fn handle_conn(
                             skills,
                             consumables,
                             practice,
+                            pilot_class,
                         });
                     }
                     ClientMsg::Input {

@@ -291,21 +291,38 @@ export class RemoteEntityRenderer {
     const throttle = Math.min(1, speed / 60);
     entry.ship.engineMaterial.opacity = 0.35 + throttle * 0.65;
 
+    // --- Flambar dinâmico dos cones de motor conforme aceleração ---
+    if (entry.ship.enginePlumes && entry.ship.enginePlumes.length > 0) {
+      const flicker = 1 + (Math.random() - 0.5) * 0.16;
+      const plumeScaleZ = Math.max(0.18, throttle * 1.55) * flicker;
+      const plumeScaleXY = (0.7 + throttle * 0.45) * flicker;
+      for (const p of entry.ship.enginePlumes) {
+        p.scale.set(plumeScaleXY, plumeScaleXY, plumeScaleZ);
+      }
+    }
+
+    // Atualiza dissipação de efeitos internos (como escudo energético)
+    entry.ship.update?.(dt);
+
     // --- Rastro de propulsão ---
     if (this.vfx && throttle > 0.15) {
-      // Emite atrás da nave (-Z local: a frente é +Z), na direção
-      // oposta ao movimento.
-      this.tmpVec.set(0, 0, -2.4).applyQuaternion(entry.group.quaternion).add(entry.group.position);
+      // Emite logo atrás dos bocais de escape (-Z local: a frente é +Z),
+      // na direção oposta ao movimento.
+      this.tmpVec.set(0, 0, -3.3).applyQuaternion(entry.group.quaternion).add(entry.group.position);
       this.tmpDir.set(meta.vel[0], meta.vel[1], meta.vel[2]).normalize().negate();
       this.vfx.emit('thruster', this.tmpVec, this.tmpDir);
     }
 
-    // --- Flash de dano ---
+    // --- Flash de dano e escudo ---
     const hp = meta.hpRatio ?? entry.lastHp;
     if (hp < entry.lastHp - 0.001) {
       const severity = Math.min(1, (entry.lastHp - hp) * 4);
       entry.hitFlash = 0.22;
-      if (this.vfx) this.vfx.emit('impact', entry.group.position);
+      if (this.vfx) {
+        this.vfx.emit('impact', entry.group.position);
+        this.vfx.emit('shield', entry.group.position);
+      }
+      entry.ship.triggerShieldHit?.(severity);
       if (meta.serverId === localId) this.onLocalHit?.(severity);
     }
     entry.lastHp = hp;

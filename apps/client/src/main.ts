@@ -38,7 +38,7 @@ import { connect } from './net/client';
 import { chargeMultiplier, primaryWeapon } from './data/weapons';
 import { aimBand, aimBandColor, aimBandLabel, solveAim } from './game/aim';
 import { gravityTotal } from './game/gravity';
-import { fetchProgression, skillNodeIds } from './net/progressionApi';
+import { fetchProgression, skillNodeIds, postXp } from './net/progressionApi';
 import { equippedFromInventory } from './data/consumables';
 import {
   equippedTorpedo,
@@ -345,6 +345,9 @@ async function bootstrap(): Promise<void> {
     // --- HUD / áudio / performance ---
     const hudState = createHudState();
     hudState.callsign = profile.callsign;
+    void fetchProgression().then((prog) => {
+      if (prog) hudState.xp = prog.totalXp;
+    }).catch(() => {});
 
     // Consumíveis ANTES de montar o HUD: os slots são construídos uma
     // vez, na montagem, então preencher depois deixaria a fileira vazia
@@ -390,7 +393,6 @@ async function bootstrap(): Promise<void> {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'p' && e.ctrlKey) perfHud.toggle();
     });
-    void audio;
 
     // --- Cena de combate ---
     // O preset gráfico corta rim/fill light no 'low': duas luzes a menos
@@ -428,12 +430,28 @@ async function bootstrap(): Promise<void> {
     let vortices: VortexState[] = [];
 
     const remoteRenderer = new RemoteEntityRenderer(renderer.scene, document.body);
+    // Gancho de inspeção, só em desenvolvimento (o Vite remove do build).
+    //
+    // Sem ele, auditar vazamento de memória de vídeo era contar chamadas
+    // de GPU de fora e adivinhar a origem.
+    if (import.meta.env.DEV) {
+      (globalThis as { __batleDebug?: unknown }).__batleDebug = {
+        renderer,
+        scene: renderer.scene,
+        remote: remoteRenderer,
+      };
+    }
     remoteRenderer.setVfx(vfx);
     // A nave em jogo passa a ser a MESMA que o jogador montou no hangar.
     remoteRenderer.setLocalShipSpec(hangarScreen.getChassisSpec());
     remoteRenderer.setOnLocalHit((severity) => {
       hud.flashDamage(severity);
       renderer.rig.addShake(0.35 + severity * 0.5);
+      audio.play('shield_hit', { volume: 0.5 + Math.min(0.5, severity * 0.4) });
+      const dmg = Math.round((severity || 0.25) * Math.max(40, hudState.shieldMax * 0.35));
+      if (hudState.shield > 0) {
+        hudState.shield = Math.max(0, hudState.shield - dmg);
+      }
     });
     const worldRenderer = new WorldEntityRenderer(renderer.scene);
 
@@ -450,6 +468,7 @@ async function bootstrap(): Promise<void> {
     Transform.posZ[localEid] = 0;
     Transform.scale[localEid] = 1;
 
+    let localShieldRegen = 8;
     const applyDerived = (s: ReturnType<typeof statsForLoadout>): void => {
       ShipStats.mass[localEid] = s.mass;
       ShipStats.shieldMax[localEid] = s.shield;
@@ -457,6 +476,7 @@ async function bootstrap(): Promise<void> {
       ShipStats.hullMax[localEid] = s.hull;
       ShipStats.hullHp[localEid] = s.hull;
       ShipStats.thrust[localEid] = s.thrust;
+      localShieldRegen = s.shieldRegen || 8;
       // O HUD lê os máximos daqui; sem isso as barras ficam em 0/100 fixo.
       hudState.hpMax = s.hull;
       hudState.hp = s.hull;
@@ -496,6 +516,8 @@ async function bootstrap(): Promise<void> {
       loadout: slots.map((sl) => sl.templateId),
       skills: skillsDaConta,
       practice,
+      // A classe vale em combate, não só nas barras do hangar.
+      pilotClass: profile.classId,
       consumables: cintoEquipado.map((c) => ({ templateId: c.templateId, charges: c.charges })),
       // O estado da conexão precisa CHEGAR ao jogador. Ele só ia para
       // o console: quando a conexão caía, a tela simplesmente congelava
@@ -514,6 +536,7 @@ async function bootstrap(): Promise<void> {
     // Alvo travado pelo jogador (Tab). Declarado antes do handler de rede
     // porque `EntityDestroyed` precisa limpá-lo quando o alvo explode.
     let lockedTargetId: number | null = null;
+    let isShipDestroyed = false;
 
     net.onMessage((msg: ServerMsg) => {
       switch (msg.type) {
@@ -572,20 +595,38 @@ async function bootstrap(): Promise<void> {
           // Chegam uma vez cada, não a cada tick (protocolo v3).
           applyWorldChunk(msg.payload);
           break;
-        case 'EntityDestroyed':
+        case 'EntityDestroyed': {
+          const myEid = (globalThis as { __localEntityId?: number }).__localEntityId;
           if (msg.payload.entity_id === lockedTargetId) {
             hud.toast('Alvo destruído', 'good');
             lockedTargetId = null;
+            audio.play('explosion', { volume: 0.75 });
+          }
+          if (myEid !== undefined && msg.payload.entity_id === myEid && !isShipDestroyed) {
+            isShipDestroyed = true;
+            hud.toast('Sua nave foi destruída! Restabelecendo sinal e retornando ao hangar...', 'bad');
+            renderer.rig.addShake(1.5);
+            vfx.emit('explosion', shipPos);
+            vfx.emit('explosion', shipPos);
+            audio.play('explosion', { volume: 1.0 });
+            setTimeout(() => {
+              returnToHangar();
+            }, 2500);
           }
           handleEntityDestroyed(msg.payload.entity_id);
           handleWorldEntityDestroyed2(msg.payload.entity_id);
           break;
+        }
         case 'XpGained': {
           const before = hudState.xp;
           hudState.xp += msg.payload.amount;
+          // Salva o XP conquistado no banco de dados para a conta nunca perder o progresso
+          void postXp(msg.payload.amount);
+          hud.toast(`+${msg.payload.amount} XP · ${msg.payload.reason || 'combate'}`, 'good');
           // Detecta a virada de nível comparando antes/depois.
           if (levelOf(before) !== levelOf(hudState.xp)) {
-            hud.toast(`Nível ${levelOf(hudState.xp)}`, 'good');
+            hud.toast(`⭐ NÍVEL ${levelOf(hudState.xp)} ALCANÇADO!`, 'good');
+            audio.play('quest_complete', { volume: 0.85 });
           }
           break;
         }
@@ -594,6 +635,7 @@ async function bootstrap(): Promise<void> {
           if (msg.payload.entity_id === myEid) {
             const skill = hudState.skills.find((s) => s.id === msg.payload.skill);
             if (skill) skill.cooldownEnd = Date.now() + skill.cooldownTotal;
+            audio.play('skill', { volume: 0.7 });
           }
           // A animação vale para QUALQUER nave: antes só o cooldown do
           // próprio jogador reagia, e usar uma habilidade não produzia
@@ -609,7 +651,15 @@ async function bootstrap(): Promise<void> {
             // divergiria na primeira recusa.
             const slot = hudState.consumables[msg.payload.slot];
             if (slot) slot.charges = msg.payload.chargesLeft;
+            if (msg.payload.vfx === 1) {
+              hudState.shield = Math.min(hudState.shieldMax, hudState.shield + hudState.shieldMax * 0.5);
+              hud.toast('Célula de escudo ativada', 'good');
+            } else {
+              hudState.hp = Math.min(hudState.hpMax, hudState.hp + hudState.hpMax * 0.35);
+              hud.toast('Kit de reparo aplicado', 'good');
+            }
           }
+          audio.play('skill', { volume: 0.65 });
           remoteRenderer.playSkillFx(
             msg.payload.entityId,
             msg.payload.vfx === 1 ? 'consumable-shield' : 'consumable-repair',
@@ -621,18 +671,64 @@ async function bootstrap(): Promise<void> {
           // ONDE e O QUÊ; o cliente só desenha.
           const p = new THREE.Vector3(...msg.payload.pos);
           switch (msg.payload.effect_id) {
-            case 1: vfx.emit('muzzle', p); break;
-            case 2: vfx.emit('impact', p); break;
-            case 3:
+            case 1: {
+              vfx.emit('muzzle', p);
+              const d = p.distanceTo(shipPos);
+              if (d < 1500) {
+                const vol = Math.max(0.08, 0.6 * (1 - d / 1500));
+                audio.play('laser', { volume: vol });
+              }
+              break;
+            }
+            case 2: {
+              vfx.emit('impact', p);
+              vfx.emit('shield', p);
+              const d = p.distanceTo(shipPos);
+              if (d < 1500) {
+                const vol = Math.max(0.08, 0.5 * (1 - d / 1500));
+                audio.play('shield_hit', { volume: vol });
+              }
+              break;
+            }
+            case 3: {
               vfx.emit('explosion', p);
               renderer.rig.addShake(0.4);
+              const d = p.distanceTo(shipPos);
+              if (d < 2200) {
+                const vol = Math.max(0.12, 0.85 * (1 - d / 2200));
+                audio.play('explosion', { volume: vol });
+              }
               break;
-            case 4:
+            }
+            case 4: {
               // Impacto contra corpo celeste: explosão maior.
               vfx.emit('explosion', p);
               vfx.emit('explosion', p);
               renderer.rig.addShake(0.9);
+              audio.play('explosion', { volume: 1.0 });
               break;
+            }
+            case 5: {
+              // EMP
+              vfx.emit('shield', p);
+              vfx.emit('impact', p);
+              renderer.rig.addShake(0.3);
+              const d = p.distanceTo(shipPos);
+              if (d < 1800) {
+                audio.play('skill', { volume: Math.max(0.1, 0.7 * (1 - d / 1800)) });
+              }
+              break;
+            }
+            case 6: {
+              // Decoy
+              vfx.emit('thruster', p);
+              vfx.emit('shield', p);
+              const d = p.distanceTo(shipPos);
+              if (d < 1500) {
+                audio.play('skill', { volume: Math.max(0.08, 0.5 * (1 - d / 1500)) });
+              }
+              break;
+            }
             default:
               break;
           }
@@ -691,6 +787,7 @@ async function bootstrap(): Promise<void> {
     input.onAction('cycleTarget', () => {
       const next = cycleTarget(lockedTargetId, hudState.position, forward, collectContacts());
       lockedTargetId = next?.id ?? null;
+      audio.play('ui_click', { volume: 0.35 });
     });
 
     // Torpedo: quando o lançamento NÃO pode sair, diga por quê.
@@ -705,7 +802,10 @@ async function bootstrap(): Promise<void> {
         lancadorEquipado,
         hudState.targetId !== null ? hudState.targetDistance : null,
       );
-      if (motivo) hud.toast(torpedoBlockMessage(motivo, lancadorEquipado), 'bad');
+      if (motivo) {
+        hud.toast(torpedoBlockMessage(motivo, lancadorEquipado), 'bad');
+        audio.play('ui_error', { volume: 0.5 });
+      }
     });
 
     /**
@@ -719,6 +819,7 @@ async function bootstrap(): Promise<void> {
       inputLoop.stop();
       input.detach();
       activeInput = null;
+      audio.stopAll();
       clearRemotes();
       remoteRenderer.clear();
       clearWorldEntities();
@@ -869,6 +970,8 @@ async function bootstrap(): Promise<void> {
 
     let last = performance.now();
     let running = true;
+    let alarmTimer = 0;
+    let thrusterTimer = 0;
     const tick = (): void => {
       // Voltar ao hangar interrompe o laço; sem isso ele continuaria
       // desenhando a cena de combate por cima do menu.
@@ -933,6 +1036,11 @@ async function bootstrap(): Promise<void> {
           shipVel.set(m.vel[0], m.vel[1], m.vel[2]);
           forward.set(0, 0, 1).applyQuaternion(shipQuat);
           if (m.hpRatio !== null) hudState.hp = Math.round(m.hpRatio * hudState.hpMax);
+        }
+
+        // Regeneração progressiva de escudo enquanto a nave estiver operando
+        if (!isShipDestroyed && hudState.shieldMax > 0 && hudState.shield < hudState.shieldMax) {
+          hudState.shield = Math.min(hudState.shieldMax, hudState.shield + localShieldRegen * dt);
         }
 
         // Câmera amortecida em vez de posição colada na nave.
@@ -1008,6 +1116,20 @@ async function bootstrap(): Promise<void> {
         if (m?.torpedo?.locked && m.torpedo.target === meuId) perseguindo += 1;
       }
       hudState.incomingTorpedoes = perseguindo;
+
+      // Som de alarme quando há torpedos perseguindo
+      alarmTimer -= dt;
+      if (hudState.incomingTorpedoes > 0 && alarmTimer <= 0) {
+        audio.play('alarm', { volume: 0.65 });
+        alarmTimer = 0.8;
+      }
+
+      // Efeito sonoro do propulsor em aceleração
+      thrusterTimer -= dt;
+      if (!isShipDestroyed && shipVel.lengthSq() > 25 && thrusterTimer <= 0) {
+        audio.play('thruster', { volume: Math.min(0.35, 0.1 + shipVel.length() / 400) });
+        thrusterTimer = 0.28;
+      }
 
         hudState.position = { x: shipPos.x, y: shipPos.y, z: shipPos.z };
         hudState.heading = Math.atan2(forward.x, -forward.z);

@@ -381,7 +381,10 @@ export class ShipBuilder {
       ['Regen.', 'shieldRegen', '/s', true],
       ['Massa', 'mass', 't', false],
       ['Sensores', 'sensorRange', 'u', true],
-      ['Carga', 'cargo', '', true],
+      // "(sem uso)" porque é a verdade: não existe coleta nem mineração
+      // no jogo, então a carga não muda nada em combate. Melhor dizer do
+      // que deixar o jogador comprar um porão achando que serve para algo.
+      ['Carga (sem uso)', 'cargo', '', true],
     ];
 
     return `<div class="yard-rows">${rows
@@ -585,7 +588,10 @@ export class ShipBuilder {
       this.message(`Layout "${name}" salvo.`, 'good');
     } catch (err) {
       console.error('Erro ao salvar layout:', err);
-      this.message('Falha ao salvar. Verifique se você está autenticado.', 'bad');
+      // A mensagem do erro, não um palpite: sem conta o layout é salvo no
+      // navegador, então "verifique se você está autenticado" mandava o
+      // jogador procurar um problema que não era o dele.
+      this.message(err instanceof Error ? err.message : 'Falha ao salvar o layout.', 'bad');
     }
   }
 }
@@ -608,7 +614,7 @@ function componentStatChips(c: UiComponentTemplate): string {
   if (s.shieldRegen) chips.push(`${s.shieldRegen}/s reg`);
   if (s.hull) chips.push(`+${s.hull} casco`);
   if (s.sensorRange) chips.push(`${s.sensorRange}u`);
-  if (s.cargo) chips.push(`+${s.cargo} carga`);
+  if (s.cargo) chips.push(`+${s.cargo} carga (sem uso)`);
   if (s.stealth) chips.push(`${s.stealth > 0 ? '+' : ''}${Math.round(s.stealth * 100)}% furt`);
   return chips
     .slice(0, 3)
